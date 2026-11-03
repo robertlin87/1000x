@@ -1,0 +1,36 @@
+# 操作記錄行模板（编辑通道）：op_parser 切出「操作記錄」段后逐行匹配。
+# 容忍行尾时间戳（如 "  (2026-10-28 01:43:44)"）与注记（如 "（TP1 後）"）。
+
+ops_header: '━━━\s*操作記錄\s*━━━'   # 段分隔线，其后为操作行
+
+templates:
+  - name: tp_hit
+    action_type: tp_hit
+    regex: '🎯\s*TP(?P<tp_index>\d+)\s*達成\s*➜\s*(?P<price>[\d.,]+)'
+  - name: all_tp
+    action_type: all_tp
+    regex: '✅\s*全部止盈'
+  - name: move_sl
+    action_type: move_sl
+    regex: '🔒\s*自動移損\s*➜\s*(?P<price>[\d.,]+)'
+  - name: hedge
+    action_type: hedge
+    regex: '🔒\s*套保\s*（SL\s*→\s*(?:進場價\s*)?(?P<price>[\d.,]+)）'
+  - name: hedge_exit
+    action_type: hedge_exit
+    regex: '🔒\s*套保出場\s*➜\s*(?P<price>[\d.,]+)'
+  - name: manual_close
+    action_type: close
+    regex: '🟥\s*已平倉'
+  - name: sl_hit
+    action_type: sl_hit
+    regex: '❌\s*止損\s*➜\s*(?P<price>[\d.,]+)'
+  - name: modify
+    action_type: modify
+    regex: '✏️\s*訂單修改'
+  - name: manual_close_fallback
+    action_type: close
+    regex: '(?:^|\s)平倉(?:$|\s|（)'
+  - name: comment
+    action_type: ignore
+    regex: '^💬'

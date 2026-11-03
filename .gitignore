@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# 本地私密配置与 TG 会话（勿入库）
+config/config.yaml
+*.session
+*.session-journal
+.env
+
+# 本地数据
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# 其他 AI 工具的本地文件
+.codebuddy/

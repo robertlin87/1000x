@@ -1,0 +1,62 @@
+# 配置模板：复制为 config/config.yaml 后填写（config.yaml 不入库）
+
+telegram:
+  session_name: autotrade_session   # Telethon 会话文件名
+  api_id: 0                          # 从 https://my.telegram.org 申请
+  api_hash: ""
+  chat_title: ""                     # 私密信号群名（启动时校验群类型，防公开群）
+  chat_id: 0                         # 群 ID（填了则优先用它定位，--list 可查）
+  proxy:                             # TG 直连超时（被墙）时必开：本地代理/VPN
+    enabled: false
+    type: socks5                     # socks5 | http
+    addr: 127.0.0.1
+    port: 7890                       # Clash 默认 7890；v2rayN socks 10808 / http 10809
+
+dry_run: true                        # true = 只解析落库、不下单
+
+exchanges:
+  active: bybit                      # bybit | bitget | deepcoin | bitunix
+  proxy:                             # 交易所 API 代理（大陆直连超时/被墙时必开）
+    enabled: false
+    type: http                       # http | socks5
+    addr: 127.0.0.1
+    port: 7897
+  bybit:
+    apiKey: ""
+    secret: ""
+    testnet: true                    # 先跑 testnet
+  bitget:
+    apiKey: ""
+    secret: ""
+    password: ""                     # passphrase 必填
+  deepcoin:
+    apiKey: ""
+    secret: ""
+  bitunix:
+    apiKey: ""
+    secret: ""
+
+risk:
+  max_concurrent_positions: 3
+  daily_loss_pct: 5.0                # 单日亏损上限（占总权益）
+  max_slippage_pct: 0.3              # 市价补单滑点阈值
+  margin_formula_tol_pct: 0.1        # 保证金复算校验容差
+  tp_ratios: equal                   # equal = n 档均分；或写死 [0.3, 0.3, 0.2, 0.2]
+  trial_min_qty: true                # 试运行：每笔下最小手数 × TP档数（每档以最小手数出场）
+  watchdog_interval_sec: 30          # 看护轮询间隔：全平后清理交易所残留挂单
+  trial_min_qty: false               # 试运行：每笔强制下最小手数（忽略风控 R%）
+
+analysts:
+  allow_all: true                    # false 时仅跟 list 中的分析师
+  list: ["Lazycat", "Trader X"]
+
+behavior:
+  amend_sl_on_move: true             # 自動移損/套保 → 改 SL
+  close_on_manual_close: true        # 🟥 已平倉/平仓 → 全平剩余 + 撤该 symbol 挂单
+  cancel_symbol_orders_on_terminal: true   # SL 或最终 TP 触发 → 撤该 symbol 全部挂单
+
+notify:
+  send_to: ""                        # 执行回执发送的 TG 会话（可选，留空不通知）
+
+storage:
+  db_path: data/autotrade.db         # SQLite 库路径（信号/事件/持仓/审计）

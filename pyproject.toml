@@ -1,0 +1,22 @@
+[project]
+name = "autotrade"
+version = "0.1.0"
+description = "Telegram 信号自动跟单机器人"
+requires-python = ">=3.11"
+dependencies = [
+    "telethon>=1.34",
+    "ccxt>=4.3",
+    "ruamel.yaml>=0.18",
+    "aiosqlite>=0.20",
+    "python-socks>=2.0",   # Telethon 走代理（TG 被墙时必需）
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pyinstaller>=6.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

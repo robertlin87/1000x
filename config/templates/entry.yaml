@@ -1,0 +1,14 @@
+# 报单模板（行级匹配）：entry_parser 逐行匹配组装 Signal。字段全繁体，与真实报单一致。
+
+header: '📌\s*訂單\s*(?P<order_id>\d+)\s*[｜|]\s*(?P<symbol>[A-Z0-9]+)USDT\s*[｜|]\s*(?P<side>(?:📈)?做多|(?:📉)?做空)'
+
+fields:
+  entry:    '進場[:：]\s*(?P<entry>[\d.,]+)\s*(?P<is_limit>現價|掛單)'
+  leverage: '槓桿[:：]\s*(?P<leverage>\d+)\s*x'
+  margin:   '保證金[:：]\s*(?:≤\s*)?(?P<margin_pct>[\d.]+)%\s*總本金(?:（上限）)?'
+  tp:       'TP(?P<tp_index>[1-4])[:：]\s*(?P<price>[\d.,]+)'
+  sl:       'SL[:：]\s*(?P<price>[\d.,]+)'
+  risk:     '風控[:：]\s*止損距離\s*(?P<stop_dist_pct>[\d.]+)%\s*→\s*控倉(?:維持|為)\s*(?P<risk_pct>[\d.]+)%\s*風控(?:（保證金上限\s*[\d.]+%）)?'
+  analyst:  '分析師[:：]\s*(?P<analyst>.+)'
+
+ops_header: '━━━\s*操作記錄\s*━━━'   # 其后为操作行，交给 op_parser

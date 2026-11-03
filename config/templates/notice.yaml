@@ -1,0 +1,28 @@
+# 紧凑操作通知模板（新消息通道）：手工操作时会另发一条新消息，同时编辑原报单。
+# 类型规则（与用户确认 2026-11-04）：
+#   - hedge（套保）/ close（已平倉）= 分析师人为操作指令，要跟着做
+#   - tp_hit / all_tp = 纯信息（交易所挂单已自动止盈），仅记录；全平后撤残留挂单由
+#     TriggerRouter 的 close_all 与 Watchdog 轮询负责（TP1-3 部分平仓不撤单）
+# 消息可能带或不带 📌 前缀；已平倉后可跟分析师看法文字（模板用 search 不锚定行尾）。
+
+templates:
+  - name: manual_close
+    action_type: close
+    regex: '(?:📌\s*)?訂單\s*(?P<order_id>\d+)\s+(?P<symbol>[A-Z0-9]+)USDT\s*(?P<side>做多|做空)\s*🟥\s*已平倉'
+  - name: hedge
+    action_type: hedge
+    regex: '(?:📌\s*)?訂單\s*(?P<order_id>\d+)\s+(?P<symbol>[A-Z0-9]+)USDT\s*(?P<side>做多|做空)\s*🔒\s*套保\s*（SL\s*→\s*(?:進場價\s*)?(?P<price>[\d.,]+)）'
+  - name: tp_hit
+    action_type: tp_hit
+    regex: '(?:📌\s*)?訂單\s*(?P<order_id>\d+)\s+(?P<symbol>[A-Z0-9]+)USDT\s*(?P<side>做多|做空)\s*🎯\s*TP(?P<tp_index>[1-4])\s*達成\s*➜\s*(?P<price>[\d.,]+)'
+  - name: all_tp
+    action_type: all_tp
+    regex: '(?:📌\s*)?訂單\s*(?P<order_id>\d+)\s+(?P<symbol>[A-Z0-9]+)USDT\s*(?P<side>做多|做空)\s*✅\s*全部止盈'
+  - name: sl_hit
+    action_type: sl_hit
+    regex: '(?:📌\s*)?訂單\s*(?P<order_id>\d+)\s+(?P<symbol>[A-Z0-9]+)USDT\s*(?P<side>做多|做空)\s*❌\s*止損\s*➜\s*(?P<price>[\d.,]+)'
+  - name: modify
+    action_type: modify
+    regex: '(?:📌\s*)?訂單\s*(?P<order_id>\d+)\s+(?P<symbol>[A-Z0-9]+)USDT\s*(?P<side>做多|做空)\s*✏️\s*訂單修改'
+
+comment: '^💬'   # 分析师备注行，忽略
