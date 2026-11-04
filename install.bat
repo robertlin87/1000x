@@ -3,7 +3,7 @@ chcp 65001 >nul
 title autotrade installer
 cd /d "%~dp0"
 echo ============================================
-echo  AutoTrade Installer
+echo  1000X Installer
 echo ============================================
 echo.
 echo [1/3] Checking Python 3.11+ ...
@@ -27,6 +27,6 @@ echo [3/3] Installing dependencies (may take a few minutes) ...
 ".venv\Scripts\python.exe" -m pip install -e . --quiet
 echo   OK
 echo.
-echo Done. Starting AutoTrade...
+echo Done. Starting 1000X...
 ".venv\Scripts\python.exe" run_app.py
 pause

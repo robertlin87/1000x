@@ -1,9 +1,12 @@
-"""GUI 对话框：跨线程提示弹窗、群选择对话框。"""
+"""GUI 对话框：跨线程提示弹窗。
+
+信号群由开发者锁定（constants.py），无群选择对话框。
+"""
 from __future__ import annotations
 
 import queue
 import tkinter as tk
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import messagebox, simpledialog
 
 
 class GuiPrompter:
@@ -31,53 +34,6 @@ class GuiPrompter:
             return
         result = simpledialog.askstring("请输入", text, parent=self._root)
         self._res.put(result or "")
-
-
-def choose_chat(root: tk.Misc, dialogs: list[tuple[str, int]]) -> str | None:
-    """弹出群选择对话框，返回所选群名对应的 chat_id 字符串，取消返回 None。"""
-    if not dialogs:
-        messagebox.showinfo("提示", "未找到任何群聊。", parent=root)
-        return None
-
-    top = tk.Toplevel(root)
-    top.title("选择信号群")
-    top.transient(root)
-    top.grab_set()
-    top.geometry("420x360")
-
-    ttk.Label(top, text="请选择你要跟单的信号群：", padding=8).pack(anchor="w")
-
-    frame = ttk.Frame(top)
-    frame.pack(fill="both", expand=True, padx=8, pady=4)
-
-    listbox = tk.Listbox(frame, font=("Microsoft YaHei UI", 10))
-    scrollbar = ttk.Scrollbar(frame, orient="vertical", command=listbox.yview)
-    listbox.configure(yscrollcommand=scrollbar.set)
-    scrollbar.pack(side="right", fill="y")
-    listbox.pack(side="left", fill="both", expand=True)
-
-    for name, _cid in dialogs:
-        listbox.insert("end", f"{name}  ({_cid})")
-
-    result: dict[str, str | None] = {"value": None}
-
-    def _on_ok():
-        sel = listbox.curselection()
-        if sel:
-            name, chat_id = dialogs[sel[0]]
-            result["value"] = str(chat_id)
-        top.destroy()
-
-    def _on_cancel():
-        top.destroy()
-
-    btn = ttk.Frame(top)
-    btn.pack(fill="x", padx=8, pady=8)
-    ttk.Button(btn, text="确定", command=_on_ok).pack(side="right", padx=4)
-    ttk.Button(btn, text="取消", command=_on_cancel).pack(side="right")
-
-    top.wait_window()
-    return result["value"]
 
 
 def show_error(root: tk.Misc, title: str, msg: str) -> None:

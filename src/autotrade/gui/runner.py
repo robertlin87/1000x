@@ -31,7 +31,7 @@ class RunnerWindow:
 
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("AutoTrade 跟单助手")
+        self.root.title("加密林教头VIP跟单助手")
         self.root.geometry("780x540")
         self._log_q: "queue.Queue[str]" = queue.Queue()
         self._build_ui()
@@ -43,6 +43,7 @@ class RunnerWindow:
         bar = ttk.Frame(self.root, padding=8)
         bar.pack(fill="x")
         ttk.Button(bar, text="重新配置", command=self._reconfigure).pack(side="left")
+        ttk.Button(bar, text="导出问题报告", command=self._export_report).pack(side="left", padx=(8, 0))
         ttk.Label(bar, text="关闭窗口即停止跟单", foreground="#475569").pack(side="right")
 
         self.text = scrolledtext.ScrolledText(
@@ -86,6 +87,35 @@ class RunnerWindow:
         except OSError:
             pass
         self.root.destroy()
+
+    def _export_report(self) -> None:
+        """生成问题报告并打开 temp 文件夹，用户把 txt 发给对接人。"""
+        import os
+
+        from ..report import write_report_file
+        from .dialogs import show_error, show_info
+
+        def _run():
+            try:
+                path = write_report_file()
+                self.root.after(0, lambda: self._on_report_ready(path))
+            except Exception as e:  # noqa: BLE001
+                logging.getLogger("autotrade").exception("生成问题报告失败")
+                self.root.after(0, lambda: show_error(self.root, "失败", f"生成报告失败：{e}"))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    def _on_report_ready(self, path) -> None:
+        import os
+
+        from .dialogs import show_info
+
+        show_info(self.root, "问题报告已生成",
+                  f"请把下面这个文件发给你对接的人：\n{path}")
+        try:
+            os.startfile(str(paths.temp_dir()))  # 打开 temp 文件夹方便用户找文件
+        except OSError:
+            pass
 
     def run(self) -> None:
         self.root.mainloop()

@@ -36,15 +36,20 @@ class OrderManager:
 
         await self._adapter.set_leverage(sym, signal.leverage)
 
-        # 开仓（随单附 SL；Bybit supports_attached_sl=True）
+        # 开仓：attached 随单附 SL（Bybit）；非 attached 开仓后独立挂 SL
+        attached = bool(self._adapter.capabilities.get("supports_attached_sl"))
         order_type = "limit" if signal.is_limit else "market"
         entry_price = signal.entry if signal.is_limit else None
         entry_order = NewOrder(
             symbol=sym, side=side, order_type=order_type, qty=qty,
-            price=entry_price, sl_price=signal.sl, leverage=signal.leverage,
+            price=entry_price, sl_price=signal.sl if attached else None,
+            leverage=signal.leverage,
         )
         entry_id = await self._adapter.create_order(entry_order)
         log.info("开仓已提交：%s %s qty=%s id=%s", sym, side, qty, entry_id)
+        if not attached:
+            # 独立 SL（reduce-only 触发单，数量=当前持仓）
+            await self._adapter.attach_sl_tp(entry_id, sym, signal.sl, None)
 
         # 挂 n 档 TP reduce-only 限价单（前 n-1 档 floor，末档=剩余）
         tps = signal.tps or []

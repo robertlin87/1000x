@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 
@@ -47,6 +48,35 @@ def logs_dir() -> Path:
     return app_dir() / "logs"
 
 
+def temp_dir() -> Path:
+    """临时文件目录：日志与问题报告（源码版 = 项目根/temp；打包版 = 应用数据目录/temp）。"""
+    return app_dir() / "temp"
+
+
+def cleanup_temp_dir() -> None:
+    """每日清理：删除 temp 内修改时间非今天的文件（只保留当天）。
+
+    用户规则（2026-11-04）：旧日志/报告在问题解决后无意义，用户不会自己
+    清理——每次启动时清掉昨天及更早的文件。
+    """
+    d = temp_dir()
+    if not d.exists():
+        return
+    today = datetime.now().date()
+    for f in d.iterdir():
+        if not f.is_file():
+            continue
+        try:
+            mdate = datetime.fromtimestamp(f.stat().st_mtime).date()
+        except OSError:
+            continue
+        if mdate < today:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
+
 def ensure_dirs() -> None:
-    for d in (config_dir(), data_dir(), logs_dir()):
+    for d in (config_dir(), data_dir(), logs_dir(), temp_dir()):
         d.mkdir(parents=True, exist_ok=True)

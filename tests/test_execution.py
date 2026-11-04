@@ -332,6 +332,44 @@ class TestTriggerRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adapter.cancelled, ["NEARUSDT"])
         self.assertTrue(any("全平" in s for s in notifier.sent), notifier.sent)
 
+    async def test_order_multiplier_scales_qty(self):
+        # 下单倍数 0.5：R 减半，手数 250 → 125
+        notifier = RecordingNotifier()
+        adapter = StubAdapter()
+        router = TriggerRouter(adapter, OrderManager(adapter), notifier,
+                               risk_cfg={"order_multiplier": 0.5})
+        await router.on_signal(make_signal())
+        entry = adapter.created[0]
+        self.assertAlmostEqual(entry["qty"], 125.0)
+
+    async def test_qty_below_min_uses_min_times_tiers(self):
+        # 手数低于最低手数 → 按最低手数 × TP档数 下单
+        class LowEquityStub(StubAdapter):
+            async def fetch_equity(self):
+                return 4.0  # 风控手数 = floor(4×2% ÷ 0.08) = 1 < 最低手数
+
+        notifier = RecordingNotifier()
+        adapter = LowEquityStub()
+        router = TriggerRouter(adapter, OrderManager(adapter), notifier,
+                               risk_cfg={"min_notional": 0.5})
+        await router.on_signal(make_signal())
+        # 最低手数按 min_cost=5U 折算 ≈ 1.644，低于它则按 ×TP档数(4) 下单
+        self.assertAlmostEqual(adapter.created[0]["qty"], 1.644 * 4, delta=0.01)
+
+    async def test_qty_above_max_capped(self):
+        # 手数高于最高手数 → 按最高手数下单
+        class MaxLimitedStub(StubAdapter):
+            async def fetch_market(self, symbol):
+                m = await super().fetch_market(symbol)
+                m["limits"] = {"amount": {"min": None, "max": 100.0}, "cost": {"min": 5.0}}
+                return m
+
+        notifier = RecordingNotifier()
+        adapter = MaxLimitedStub()
+        router = TriggerRouter(adapter, OrderManager(adapter), notifier)
+        await router.on_signal(make_signal())
+        self.assertEqual(adapter.created[0]["qty"], 100.0)
+
 
 if __name__ == "__main__":
     unittest.main()

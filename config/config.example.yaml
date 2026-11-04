@@ -4,8 +4,7 @@ telegram:
   session_name: autotrade_session   # Telethon 会话文件名
   api_id: 0                          # 从 https://my.telegram.org 申请
   api_hash: ""
-  chat_title: ""                     # 私密信号群名（启动时校验群类型，防公开群）
-  chat_id: 0                         # 群 ID（填了则优先用它定位，--list 可查）
+  # 信号群由开发者锁定（src/autotrade/constants.py），不可自定义
   proxy:                             # TG 直连超时（被墙）时必开：本地代理/VPN
     enabled: false
     type: socks5                     # socks5 | http
@@ -15,7 +14,7 @@ telegram:
 dry_run: true                        # true = 只解析落库、不下单
 
 exchanges:
-  active: bybit                      # bybit | bitget | deepcoin | bitunix
+  active: bybit                      # bybit | binance | bitget | gate | deepcoin | bitunix
   proxy:                             # 交易所 API 代理（大陆直连超时/被墙时必开）
     enabled: false
     type: http                       # http | socks5
@@ -24,14 +23,20 @@ exchanges:
   bybit:
     apiKey: ""
     secret: ""
-    testnet: true                    # 先跑 testnet
+  binance:
+    apiKey: ""
+    secret: ""
   bitget:
     apiKey: ""
     secret: ""
-    password: ""                     # passphrase 必填
+    passphrase: ""                   # passphrase 必填
+  gate:
+    apiKey: ""
+    secret: ""
   deepcoin:
     apiKey: ""
     secret: ""
+    passphrase: ""                   # passphrase 必填
   bitunix:
     apiKey: ""
     secret: ""
@@ -42,9 +47,8 @@ risk:
   max_slippage_pct: 0.3              # 市价补单滑点阈值
   margin_formula_tol_pct: 0.1        # 保证金复算校验容差
   tp_ratios: equal                   # equal = n 档均分；或写死 [0.3, 0.3, 0.2, 0.2]
-  trial_min_qty: true                # 试运行：每笔下最小手数 × TP档数（每档以最小手数出场）
+  order_multiplier: 1.0              # 下单倍数：报单「控仓 x%」的 R 值缩放（0.5=减半，2=加倍）
   watchdog_interval_sec: 30          # 看护轮询间隔：全平后清理交易所残留挂单
-  trial_min_qty: false               # 试运行：每笔强制下最小手数（忽略风控 R%）
 
 analysts:
   allow_all: true                    # false 时仅跟 list 中的分析师

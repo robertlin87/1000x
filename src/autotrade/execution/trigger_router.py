@@ -45,18 +45,32 @@ class TriggerRouter:
             )
             return
 
-        # 试运行：每笔下「最小手数 × TP 档数」，确保每档 TP 都能以最小手数出场
-        if self._risk_cfg.get("trial_min_qty", False):
-            amount_step = market.get("precision", {}).get("amount")
-            limits = market.get("limits", {})
-            min_cost = (limits.get("cost") or {}).get("min") or 5.0
-            min_qty = calc_min_qty(signal.entry, amount_step, min_cost)
-            n_tiers = max(1, len(signal.tps))
-            qty = round(min_qty * n_tiers, 12)
-            log.info("试运行：最小手数 x%d qty=%s（min=%s，原风控 qty=%s）",
-                     n_tiers, qty, min_qty, decision.qty)
-        else:
-            qty = decision.qty
+        # 下单倍数（用户设定，默认 1）：报单「控仓维持 x%」的 R 值缩放，
+        # 手数 = floor(equity × R×倍数 ÷ |进場−止損| ÷ 合约倍数) 随之缩放
+        multiplier = float(self._risk_cfg.get("order_multiplier", 1.0))
+        qty = round(decision.qty * multiplier, 12)
+
+        # 手数上下限（用户规则 2026-11-04）：
+        # - 低于最低手数 → 按最低手数 × TP档数 交易（保证每档都能以最小手数出场）
+        # - 高于最高手数 → 按最高手数交易
+        limits = market.get("limits", {})
+        amount_limits = limits.get("amount") or {}
+        amount_step = market.get("precision", {}).get("amount")
+        min_cost = (limits.get("cost") or {}).get("min") or 5.0
+        eff_min = calc_min_qty(signal.entry, amount_step, min_cost)
+        if amount_limits.get("min"):
+            eff_min = max(eff_min, float(amount_limits["min"]))
+        n_tiers = max(1, len(signal.tps))
+        if qty < eff_min:
+            qty = round(eff_min * n_tiers, 12)
+            log.info("低于最低手数：按最低手数 x%d 下单 qty=%s（最低=%s）",
+                     n_tiers, qty, eff_min)
+        max_qty = amount_limits.get("max")
+        if max_qty and qty > float(max_qty):
+            qty = float(max_qty)
+            log.info("高于最高手数：按最高手数下单 qty=%s", qty)
+        log.info("下单倍数 x%s：风控手数 %s → 实际手数 %s",
+                 multiplier, decision.qty, qty)
 
         result = await self._om.enter(signal, qty)
         await self._notifier.send(

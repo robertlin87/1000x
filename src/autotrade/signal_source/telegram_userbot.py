@@ -16,6 +16,7 @@ from datetime import datetime
 
 from telethon import TelegramClient, events
 
+from ..constants import GROUP_CHAT_ID, GROUP_CHAT_TITLE
 from ..proxy import resolve_proxy
 from .base import MessageHandler, RawMessage, SignalSource
 
@@ -70,8 +71,9 @@ def _patch_keepalive_interval(interval: float = 30.0) -> None:
 class TelegramUserbotSource(SignalSource):
     """Telethon userbot 信号源。
 
-    :param chat_title: 按群名定位（推荐，可读性好）
-    :param chat_id: 按 chat id 定位（优先于 chat_title，避免重名群）
+    信号群由开发者锁定（constants.GROUP_CHAT_ID/TITLE），不接受自定义——
+    防止软件被用于监听其他群。被踢出私密群后 Telegram 停止推送，
+    软件自然失效（群资格即授权）。
     """
 
     def __init__(
@@ -80,8 +82,6 @@ class TelegramUserbotSource(SignalSource):
         api_id: int,
         api_hash: str,
         session_name: str = "autotrade_session",
-        chat_title: str | None = None,
-        chat_id: int | None = None,
         proxy: dict | None = None,
         prompt: Callable[[str], str] | None = None,
     ) -> None:
@@ -96,8 +96,8 @@ class TelegramUserbotSource(SignalSource):
             session_name, api_id, api_hash, proxy=_build_proxy(proxy)
         )
         self._prompt = prompt or input  # 可注入的提示回调（GUI 弹窗 / 命令行 input）
-        self._chat_title = chat_title
-        self._chat_id = chat_id
+        self._chat_title = GROUP_CHAT_TITLE
+        self._chat_id = GROUP_CHAT_ID
         self._target = None
 
     # ---- 公开入口 ----
@@ -111,7 +111,12 @@ class TelegramUserbotSource(SignalSource):
         """
         from telethon.errors import SessionPasswordNeededError
 
-        await self._client.connect()
+        try:
+            await asyncio.wait_for(self._client.connect(), timeout=30)
+        except asyncio.TimeoutError:
+            raise RuntimeError(
+                "连接 Telegram 超时：请检查网络（大陆环境需开 VPN/代理，海外用户直连即可）"
+            ) from None
         if await self._client.is_user_authorized():
             me = await self._client.get_me()
             log.info("已登录过：%s (@%s)，无需重复登录", me.first_name, me.username)
@@ -144,6 +149,25 @@ class TelegramUserbotSource(SignalSource):
         finally:
             await self._client.disconnect()
 
+    async def check_group_access(self) -> tuple[bool, str]:
+        """校验当前账号能否访问锁定的信号群（群资格即授权）。
+
+        返回 (True, 群名) 或 (False, 失败原因)。未加入私密群时 Telegram
+        拒绝访问（CHANNEL_PRIVATE），即为授权失败——这也是"被踢即失效"
+        的校验点。
+        """
+        from telethon.errors import ChannelPrivateError, UserNotParticipantError
+
+        await self._client.start()
+        try:
+            target = await self._resolve_chat()
+        except (ChannelPrivateError, UserNotParticipantError):
+            return False, f"你的账号未加入「{GROUP_CHAT_TITLE}」——请先加入该群（被移出群后软件将失效）"
+        except Exception as e:  # noqa: BLE001
+            return False, f"无法访问信号群：{e}"
+        self._check_group_privacy(target)
+        return True, getattr(target, "title", GROUP_CHAT_TITLE)
+
     async def list_dialogs(self, limit: int = 50) -> list[tuple[str, int]]:
         """列出最近的群/频道（群名, chat id），用于定位信号群。"""
         await self._client.start()
@@ -159,7 +183,7 @@ class TelegramUserbotSource(SignalSource):
         log.info("已登录 TG：%s (id=%s, @%s)", me.first_name, me.id, me.username)
 
         self._target = await self._resolve_chat()
-        self._check_group_privacy()
+        self._check_group_privacy(self._target)
         self._register_handlers()
         log.info("开始监听群「%s」，Ctrl+C 退出", getattr(self._target, "title", self._target))
         await self._client.run_until_disconnected()
@@ -171,19 +195,22 @@ class TelegramUserbotSource(SignalSource):
 
     async def _resolve_chat(self):
         if self._chat_id:
-            return await self._client.get_entity(int(self._chat_id))
+            try:
+                return await self._client.get_entity(int(self._chat_id))
+            except Exception:
+                # 未加入私密群时 get_entity 抛 CHANNEL_PRIVATE；按群名在会话列表兜底一次
+                pass
         if self._chat_title:
             async for d in self._client.iter_dialogs():
                 if d.name == self._chat_title:
                     return d.entity
         raise RuntimeError(
-            "找不到目标群：请确认 config.yaml 的 chat_title 与群名完全一致，"
-            "或先运行 `python scripts/listen.py --list` 查看会话列表"
+            f"无法访问信号群「{GROUP_CHAT_TITLE}」：请确认已加入该群（被移出群后软件即失效）"
         )
 
-    def _check_group_privacy(self) -> None:
+    def _check_group_privacy(self, target) -> None:
         # 私密群前提：公开群被踢后仍可轮询历史，群资格授权会被绕过
-        username = getattr(self._target, "username", None)
+        username = getattr(target, "username", None)
         if username:
             log.warning(
                 "⚠️ 目标群是公开群（@%s）：被踢出后仍可读到历史消息，授权模型不成立，建议改用私密群",

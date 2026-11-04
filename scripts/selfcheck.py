@@ -1,8 +1,13 @@
-"""Bybit 真实下单自检：分阶段验证 adapter。
+"""交易所自检：逐家验证适配器（readonly + 真实小单全路径，自动清理）。
 
 用法：
-  python scripts/selfcheck.py --readonly   # 仅只读，不下单
-  python scripts/selfcheck.py              # 只读 + 极小单交易验证（自动清理）
+  python scripts/selfcheck.py --readonly                       # 仅只读（用 config 的 active）
+  python scripts/selfcheck.py --exchange binance --readonly    # 指定交易所只读
+  python scripts/selfcheck.py --exchange binance               # 真实小单全路径验证（自动清理）
+  python scripts/selfcheck.py --exchange bitget --symbol LITUSDT
+
+全路径：set_leverage → 开仓（附/挂 SL）→ 挂 TP 档 → 移动止损 → 全平清理。
+按 capabilities 自动走 attached / 独立 SL 两条路径（与生产 OrderManager 一致）。
 """
 import argparse
 import asyncio
@@ -14,111 +19,88 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-import ccxt  # noqa: E402
-
 from autotrade.config import load_config  # noqa: E402
-from autotrade.exchange.base import NewOrder  # noqa: E402
 from autotrade.exchange.factory import get_adapter  # noqa: E402
+from autotrade.execution.order_manager import OrderManager  # noqa: E402
+from autotrade.parser.entry_parser import Signal  # noqa: E402
+from autotrade.risk.precision import round_price  # noqa: E402
 
 
 async def readonly(adapter) -> None:
     print("== fetch_equity ==")
     print("  equity =", await adapter.fetch_equity())
     print("== fetch_market LITUSDT ==")
-    print("  ", await adapter.fetch_market("LITUSDT"))
-    print("== fetch_position LITUSDT ==")
-    print("  ", await adapter.fetch_position("LITUSDT"))
+    try:
+        print("  ", await adapter.fetch_market("LITUSDT"))
+    except ValueError as e:
+        print("  ", e)
+    print("== fetch_all_positions ==")
+    print("  ", await adapter.fetch_all_positions())
     print("== fetch_open_orders (全部) ==")
     print("  ", await adapter.fetch_open_orders())
 
 
-async def _cleanup(adapter, sym: str) -> None:
-    """撤掉该 symbol 全部挂单 + 市价平掉残余仓位（幂等，可反复调用）。"""
-    await adapter.cancel_all_for_symbol(sym)
-    pos = await adapter.fetch_position(sym)
-    if pos and pos.get("qty", 0) > 0:
-        side = "sell" if pos["side"] == "long" else "buy"
-        o = NewOrder(symbol=sym, side=side, order_type="market",
-                     qty=pos["qty"], reduce_only=True)
-        await adapter.create_order(o)
-        await asyncio.sleep(2)
-    print("清理后持仓:", await adapter.fetch_position(sym))
-    print("清理后挂单:", await adapter.fetch_open_orders(sym))
+async def trade(adapter, symbol: str) -> None:
+    """真实小单全路径验证，走生产同款 OrderManager 流程，结束自动清理。"""
+    market = await adapter.fetch_market(symbol)
+    price = await adapter.fetch_ticker(symbol)
+    print(f"\n== 交易自检（{symbol} 现价 {price}）==")
 
+    amount_step = market["precision"]["amount"]
+    price_step = market["precision"]["price"]
+    min_cost = (market.get("limits", {}).get("cost") or {}).get("min") or 5.0
+    if not amount_step or price <= 0:
+        print("  市场精度缺失，跳过交易自检")
+        return
+    min_qty = math.ceil(min_cost / price / amount_step) * amount_step
+    qty = round(min_qty * 2, 12)  # 2 档 TP 各最小手数
+    sl = round_price(price * 0.95, price_step)
+    tps = [round_price(price * 1.02, price_step), round_price(price * 1.04, price_step)]
 
-async def trade(adapter, cfg) -> None:
-    b = cfg.exchanges["bybit"]
-    proxy = cfg.exchanges.get("proxy") or {}
-    purl = f"{proxy.get('type', 'http')}://{proxy.get('addr', '127.0.0.1')}:{proxy.get('port', 7897)}"
-    raw = ccxt.bybit({
-        "apiKey": b["apiKey"], "secret": b["secret"],
-        "options": {"defaultType": "swap"},
-        "proxies": {"http": purl, "https": purl},
-    })
-    raw.load_markets()
-    sym = "LITUSDT"
-    price = raw.fetch_ticker("LIT/USDT:USDT")["last"]
-    print(f"\n== 交易自检（LITUSDT 现价 {price}）==")
-
+    sig = Signal(order_id="selfcheck", symbol=symbol, side="long", entry=price,
+                 is_limit=False, leverage=10, sl=sl, tps=tps,
+                 margin_pct=10.0, risk_pct=2.0, stop_dist_pct=5.0, analyst="selfcheck")
+    om = OrderManager(adapter)
     try:
-        # 1) set_leverage
-        await adapter.set_leverage(sym, 10)
-        print("1) set_leverage(10) OK")
-
-        # 2) 市价开最小手数单（约 5U 名义值），随单附 SL（下方 5%）
-        market = await adapter.fetch_market(sym)
-        min_amount = market["precision"]["amount"]
-        min_cost = market["limits"]["cost"]["min"]
-        qty = round(math.ceil(min_cost / price / min_amount) * min_amount, 6)
-        sl = round(price * 0.95, 4)
-        print(f"   最小手数 qty={qty}（约 {qty * price:.2f}U）")
-        o = NewOrder(symbol=sym, side="buy", order_type="market", qty=qty,
-                     sl_price=sl, leverage=10)
-        oid = await adapter.create_order(o)
-        print(f"2) 开仓市价单 id={oid} 附 SL={sl}")
-
+        result = await om.enter(sig, qty)
+        print("1) 开仓+SL+TP 完成:", result)
         await asyncio.sleep(2)
-        pos = await adapter.fetch_position(sym)
-        print("   持仓:", pos)
+        print("   持仓:", await adapter.fetch_position(symbol))
+        print("   挂单:", await adapter.fetch_open_orders(symbol))
 
-        # 3) 挂 2 档 TP reduce-only 限价单（各半）
-        tp1, tp2 = round(price * 1.02, 4), round(price * 1.04, 4)
-        tier_qty = round(qty / 2, 6)
-        for tp in (tp1, tp2):
-            to = NewOrder(symbol=sym, side="sell", order_type="limit", qty=tier_qty,
-                          price=tp, reduce_only=True)
-            tid = await adapter.create_order(to)
-            print(f"3) TP 单 id={tid} @ {tp} (reduce-only)")
-        print("   挂单:", await adapter.fetch_open_orders(sym))
-
-        # 4) 移动止损（trading-stop 端点）
-        new_sl = round(price * 0.97, 4)
-        await adapter.amend_order(order_id="", symbol=sym, sl_price=new_sl)
-        print(f"4) 移动止损 -> SL={new_sl}")
-        pos2 = await adapter.fetch_position(sym)
-        print("   移损后持仓 sl_price:", pos2.get("sl_price") if pos2 else None)
+        new_sl = round_price(price * 0.97, price_step)
+        await om.amend_sl(symbol, new_sl)
+        print(f"2) 移动止损 -> SL={new_sl}")
+        pos = await adapter.fetch_position(symbol)
+        print("   移损后持仓 sl_price:", pos.get("sl_price") if pos else None)
     finally:
         print("\n== 清理 ==")
-        await _cleanup(adapter, sym)
+        await om.close_all(symbol)
+        await asyncio.sleep(2)
+        print("清理后持仓:", await adapter.fetch_position(symbol))
+        print("清理后挂单:", await adapter.fetch_open_orders(symbol))
         print("交易自检完成，仓位与挂单已清理。")
 
 
 async def main() -> None:
-    parser = argparse.ArgumentParser(description="Bybit 自检")
+    parser = argparse.ArgumentParser(description="交易所自检")
     parser.add_argument("--config", default="config/config.yaml")
+    parser.add_argument("--exchange", default=None, help="覆盖 config 的 exchanges.active")
+    parser.add_argument("--symbol", default="LITUSDT", help="交易自检用的交易对")
     parser.add_argument("--readonly", action="store_true", help="仅只读验证，不下单")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
     ex = cfg.exchanges
-    adapter = get_adapter(ex.get("active", "bybit"), ex.get("bybit", {}),
-                          proxy=ex.get("proxy"))
+    name = args.exchange or ex.get("active", "bybit")
+    print(f"== 交易所：{name} ==")
+    adapter = get_adapter(name, ex.get(name, {}), proxy=ex.get("proxy"))
 
     await readonly(adapter)
     if args.readonly:
         print("\n只读自检结束，未下单。")
         return
-    await trade(adapter, cfg)
+    await trade(adapter, args.symbol)
 
 
 if __name__ == "__main__":

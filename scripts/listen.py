@@ -20,7 +20,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from autotrade import paths  # noqa: E402
 from autotrade.config import load_config  # noqa: E402
+from autotrade.logfile import install_file_logging  # noqa: E402
 from autotrade.signal_source.base import RawMessage  # noqa: E402
 from autotrade.signal_source.telegram_userbot import TelegramUserbotSource  # noqa: E402
 
@@ -50,15 +52,18 @@ async def main() -> None:
     parser.add_argument("--output", default="data/messages.jsonl", help="消息输出文件")
     args = parser.parse_args()
 
+    paths.ensure_dirs()
+    paths.cleanup_temp_dir()  # 每日清理：只保留当天的日志/报告
+    install_file_logging()  # 日志落盘 temp/autotrade.log
+
     cfg = load_config(args.config)
     tg = cfg.telegram
+    # 信号群由 constants 锁定（开发者固定），忽略配置文件里的 chat_title/chat_id
     source = TelegramUserbotSource(
         handler=lambda raw: record(raw, args.output),
         api_id=int(tg.get("api_id", 0)),
         api_hash=tg.get("api_hash", ""),
         session_name=tg.get("session_name", "autotrade_session"),
-        chat_title=tg.get("chat_title") or None,
-        chat_id=tg.get("chat_id") or None,
         proxy=tg.get("proxy"),
     )
 

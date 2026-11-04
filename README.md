@@ -1,10 +1,10 @@
-# autotrade — Telegram 信号自动跟单机器人
+# 加密林教头VIP跟单助手（autotrade）— Telegram 信号自动跟单机器人
 
 币圈 Telegram 私密信号群 → 自动解析报单 → 交易所永续合约全自动跟单。
 
 - **授权模型**：VIP 用自己的 TG 账号登录软件监听群，被踢出群即失效（群资格即授权）
 - **主触发**：进场即在交易所挂 SL + TP1-4 限价单（价格驱动）；群消息（新消息 + 原帖编辑）作为备份核对与人为操作指令通道
-- **交易所**：Bybit（MVP），ccxt 统一引擎
+- **交易所**：Bybit / Binance / Bitget / Gate / Deepcoin / Bitunix（六家，ccxt 统一引擎 + Bitunix 手写 REST）
 
 ## 用户使用指南（面向不懂技术的用户）
 
@@ -14,14 +14,12 @@
 2. 双击 `autotrade.exe`
 3. 首次运行会弹出**配置向导**，按提示填：
    - TG 的 `api_id` / `api_hash`（到 <https://my.telegram.org> 申请）
-   - 点「登录 Telegram」→ 弹窗输入手机号、验证码（有 2FA 再输密码）
-   - 点「选择群聊」选你的信号群
-   - Bybit 的 API Key / Secret（只开「读写 + 合约交易」权限，**不要开提现**）
+   - 点「登录 Telegram」→ 弹窗输入手机号、验证码（有 2FA 再输密码）；自动验证信号群资格
+   - **选择你的交易所**（Bybit / Binance / Bitget / Gate / Deepcoin / Bitunix）→ 按页面提示填写 API 字段，页面会显示该所的权限注意事项
    - 点「保存并自检」
 4. 配置完成后自动启动监听，窗口里滚动显示日志；**关闭窗口即停止**
 
 > 网络要求：大陆环境需开 VPN（程序会自动读取系统代理，无需手动填代理端口）。
-> 交易所：充值后需在 Bybit 把资金从「资金账户」划转到「统一交易账户」。
 
 **方式二：源码部署（面向技术用户）**
 
@@ -61,8 +59,8 @@ src/autotrade/
 ├── proxy.py          # 代理动态解析（自动读系统代理）
 ├── parser/           # 报单/通知/操作行解析器
 ├── risk/             # 风控、手数公式、精度
-├── exchange/         # 交易所适配（Bybit）
-├── execution/        # OrderManager、PositionTracker、TriggerRouter
-├── storage/          # SQLite
+├── exchange/         # 六家交易所适配 + schemas.py（向导动态表单）
+├── execution/        # OrderManager、TriggerRouter、Watchdog
+├── storage/          # SQLite（信号/事件幂等层）
 └── signal_source/    # Telethon userbot
 ```

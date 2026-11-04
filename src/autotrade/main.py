@@ -18,6 +18,7 @@ from .exchange.noop import NoopAdapter
 from .execution.order_manager import OrderManager
 from .execution.trigger_router import TriggerRouter
 from .execution.watchdog import Watchdog
+from .logfile import install_file_logging
 from .notify.notifier import Notifier
 from .parser.entry_parser import EntryParser
 from .parser.notice_parser import NoticeParser
@@ -184,6 +185,8 @@ class MessagePipeline:
 async def run(config_path: str | None = None) -> None:
     """启动跟单主程序。config_path 缺省时用外部目录的 config.yaml。"""
     paths.ensure_dirs()
+    paths.cleanup_temp_dir()  # 每日清理：只保留当天的日志/报告
+    install_file_logging()  # 日志落盘 temp/autotrade.log（问题报告的数据来源）
     config_path = config_path or str(paths.config_path())
     cfg = load_config(config_path)
     db_path = Path(cfg.storage.get("db_path", str(paths.db_path())))
@@ -196,8 +199,8 @@ async def run(config_path: str | None = None) -> None:
         adapter = NoopAdapter()
     else:
         ex = cfg.exchanges
-        adapter = get_adapter(ex.get("active", "bybit"), ex.get("bybit", {}),
-                              proxy=ex.get("proxy"))
+        active = ex.get("active", "bybit")
+        adapter = get_adapter(active, ex.get(active, {}), proxy=ex.get("proxy"))
     order_manager = OrderManager(adapter)
     router = TriggerRouter(adapter, order_manager, notifier, cfg.risk, cfg.analysts)
 
@@ -213,13 +216,12 @@ async def run(config_path: str | None = None) -> None:
         watchdog_task = asyncio.create_task(watchdog.run())
 
     tg = cfg.telegram
+    # 信号群由 constants 锁定（开发者固定），忽略配置文件里的 chat_title/chat_id
     source = TelegramUserbotSource(
         handler=pipeline.handle,
         api_id=int(tg.get("api_id", 0)),
         api_hash=tg.get("api_hash", ""),
         session_name=paths.session_path(tg.get("session_name", "autotrade_session")),
-        chat_title=tg.get("chat_title") or None,
-        chat_id=tg.get("chat_id") or None,
         proxy=tg.get("proxy"),
     )
     try:
