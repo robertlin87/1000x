@@ -3,7 +3,7 @@ chcp 65001 >nul
 title autotrade 安裝程式
 cd /d "%~dp0"
 echo ============================================
-echo  1000X 安裝程式
+echo  CryptoLJT 安裝程式
 echo ============================================
 echo.
 echo [1/3] 檢查 Python 3.11+ ...
@@ -36,6 +36,6 @@ echo [3/3] 安裝相依套件（可能需要幾分鐘）...
 ".venv\Scripts\python.exe" -m pip install -e . --quiet
 echo   完成
 echo.
-echo 完成。啟動 1000X...
+echo 完成。啟動 CryptoLJT...
 ".venv\Scripts\python.exe" scripts\run.py
 pause
