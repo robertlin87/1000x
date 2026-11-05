@@ -59,7 +59,7 @@ def _template() -> dict:
             "active": "bybit",
             "proxy": {"enabled": False, "type": "http", "addr": "127.0.0.1", "port": 7897},
         },
-        "risk": {"order_multiplier": 1.0},
+        "risk": {"order_multiplier": 1.0, "tp_ratios": [25.0, 25.0, 25.0, 25.0]},
         "analysts": {"allow_all": True, "list": []},
         "behavior": {
             "amend_sl_on_move": True,
@@ -94,6 +94,7 @@ def build_config(
     exchange: str,
     credentials: dict,
     order_multiplier: float,
+    tp_ratios: list[float] | None = None,
     base: dict | None = None,
 ) -> dict:
     """組裝與 config.example.yaml 對齊的完整設定 dict（供 write_config 落盤）。
@@ -119,6 +120,11 @@ def build_config(
 
     risk = cfg.setdefault("risk", {})
     risk["order_multiplier"] = float(order_multiplier)
+    # 無條件覆蓋為規範列表：杜絕模板裡殘留的舊佔位值 "equal" 被寫回磁盤
+    risk["tp_ratios"] = (
+        [float(v) for v in tp_ratios] if tp_ratios is not None
+        else [25.0, 25.0, 25.0, 25.0]
+    )
 
     storage = cfg.setdefault("storage", {})
     storage["db_path"] = "data/autotrade.db"

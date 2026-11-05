@@ -25,6 +25,33 @@ class TestBuildConfig(unittest.TestCase):
         self.assertEqual(cfg["exchanges"]["active"], "bybit")
         self.assertEqual(cfg["storage"]["db_path"], "data/autotrade.db")
         self.assertEqual(cfg["risk"]["order_multiplier"], 2.0)
+        # 未傳 tp_ratios → 預設 25/25/25/25（無條件覆蓋模板值）
+        self.assertEqual(cfg["risk"]["tp_ratios"], [25.0, 25.0, 25.0, 25.0])
+
+    def test_tp_ratios_override(self):
+        cfg = build_config(
+            api_id=1, api_hash="h", exchange="bybit",
+            credentials={"apiKey": "k", "secret": "s"}, order_multiplier=1.0,
+            tp_ratios=[40, 20, 20, 20],
+        )
+        self.assertEqual(cfg["risk"]["tp_ratios"], [40.0, 20.0, 20.0, 20.0])
+
+    def test_tp_ratios_written_and_readback(self):
+        # 落盤後經 load_config 回讀（不依賴 ruamel 序列化文本格式）
+        import tempfile as _tf
+
+        from autotrade.config import load_config
+
+        cfg = build_config(
+            api_id=1, api_hash="h", exchange="bybit",
+            credentials={"apiKey": "k", "secret": "s"}, order_multiplier=1.0,
+            tp_ratios=[50, 0, 25, 25],
+        )
+        with _tf.TemporaryDirectory() as d:
+            p = Path(d) / "config.yaml"
+            write_config(p, cfg)
+            self.assertEqual(load_config(str(p)).risk["tp_ratios"],
+                             [50.0, 0.0, 25.0, 25.0])
 
     def test_only_active_exchange_has_keys(self):
         creds = {"apiKey": "K", "secret": "S", "passphrase": "P"}

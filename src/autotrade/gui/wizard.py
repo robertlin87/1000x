@@ -12,7 +12,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from .. import paths
-from ..config import parse_multiplier
+from ..config import parse_multiplier, parse_tp_ratios
 from ..config_writer import build_config, write_config, friendly_selfcheck_error
 from ..constants import GROUP_CHAT_TITLE
 from ..exchange.schemas import EXCHANGE_ORDER, EXCHANGE_SCHEMAS
@@ -26,7 +26,7 @@ class Wizard:
     def __init__(self) -> None:
         self.root = tk.Tk()
         self.root.title("加密林教頭 VIP跟單助手 — 首次設定")
-        self.root.geometry("600x520")
+        self.root.geometry("600x560")
         self.root.minsize(560, 480)
         self.prompter = GuiPrompter(self.root)
 
@@ -37,6 +37,9 @@ class Wizard:
         self.exchange_fields: dict[str, tk.StringVar] = {}  # 動態欄位 key -> var
         self.ex_notes = tk.StringVar()
         self.order_multiplier = tk.StringVar(value="1")  # 下單倍數（R 值縮放）
+        self.tp_ratio_vars: list[tk.StringVar] = [
+            tk.StringVar(value="25") for _ in range(4)
+        ]  # 止盈部位比例（%，四檔合計 100，可填 0）
         self.tg_status = tk.StringVar(value="未登入")
         self.group_status = tk.StringVar(value=f"訊號群（固定）：{GROUP_CHAT_TITLE}")
         self.group_ok = False
@@ -141,6 +144,17 @@ class Wizard:
         ttk.Label(row, text="（只能填數字：整數或小數，如 1 / 0.5 / 1.25）",
                   foreground="#64748B").pack(side="left", padx=(8, 0))
 
+        tp_row = ttk.Frame(f)
+        tp_row.pack(anchor="w", pady=(0, 6))
+        ttk.Label(tp_row, text="止盈部位比例（%）").pack(side="left")
+        for i, var in enumerate(self.tp_ratio_vars, 1):
+            ttk.Label(tp_row, text=f"TP{i}").pack(side="left", padx=(8, 2))
+            ttk.Entry(tp_row, textvariable=var, width=6).pack(side="left", padx=(0, 4))
+        ttk.Label(f, foreground="#64748B", wraplength=520, justify="left", text=(
+            "四檔比例合計須為 100%（可填 0 = 該檔不掛單）；\n"
+            "最後一個非 0 的檔位會全出剩餘部位；報單多出的檔位不掛單。"
+        )).pack(anchor="w", pady=(0, 10))
+
         ttk.Label(f, foreground="#475569", wraplength=520, justify="left", text=(
             "報單「控倉維持 x% 風控」的 R 值乘以下單倍數：\n"
             "1 倍 = 依報單原值（如 2%）；0.5 倍 = 減半（1%）；2 倍 = 加倍（4%）。\n"
@@ -211,6 +225,12 @@ class Wizard:
         except ValueError as e:
             show_error(self.root, "錯誤", str(e))
             return
+        try:
+            # 空輸入框視為 0（與 CLI 的「未填 = 0」語義一致）
+            parse_tp_ratios([v.get() or "0" for v in self.tp_ratio_vars])
+        except ValueError as e:
+            show_error(self.root, "錯誤", str(e))
+            return
         schema = EXCHANGE_SCHEMAS[self.exchange_name.get()]
         missing = [f["label"] for f in schema["fields"]
                    if not (self.exchange_fields.get(f["key"]) or tk.StringVar(value="")).get().strip()]
@@ -272,6 +292,7 @@ class Wizard:
             exchange=self.exchange_name.get(),
             credentials=credentials,
             order_multiplier=parse_multiplier(self.order_multiplier.get()),
+            tp_ratios=parse_tp_ratios([v.get() or "0" for v in self.tp_ratio_vars]),
         )
         write_config(paths.config_path(), cfg)
 

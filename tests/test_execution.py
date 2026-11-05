@@ -156,6 +156,46 @@ class TestOrderManager(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["qty"], 250.0)
         self.assertEqual(len(result["tp_order_ids"]), 4)
 
+    async def test_enter_tp_ratios_only_tp1_full_close(self):
+        # 驗收 1：只填 TP1 → 只掛 1 檔 TP（全清）
+        om = OrderManager(NoopAdapter())
+        result = await om.enter(make_signal(), 250.0, tp_ratios=[100, 0, 0, 0])
+        self.assertEqual(len(result["tp_order_ids"]), 1)
+
+    async def test_enter_tp_ratios_two_tiers(self):
+        # 驗收 2：填 TP1+TP2 → 2 檔，各 125
+        adapter = StubAdapter()
+        om = OrderManager(adapter)
+        result = await om.enter(make_signal(), 250.0, tp_ratios=[50, 50, 0, 0])
+        self.assertEqual(len(result["tp_order_ids"]), 2)
+        tp_orders = [c for c in adapter.created if c["reduce_only"]]
+        self.assertEqual([o["qty"] for o in tp_orders], [125.0, 125.0])
+
+    async def test_enter_three_tier_signal_full_close_on_last(self):
+        # 驗收 6：報單 3 檔 + 預設比例 → TP1/TP2 各 25%、TP3 全清 50%
+        adapter = StubAdapter()
+        om = OrderManager(adapter)
+        sig = make_signal(tps=[3.1213, 3.1788, 3.2411])
+        result = await om.enter(sig, 250.0, tp_ratios=[25, 25, 25, 25])
+        self.assertEqual(len(result["tp_order_ids"]), 3)
+        tp_orders = [c for c in adapter.created if c["reduce_only"]]
+        self.assertEqual([o["qty"] for o in tp_orders], [62.5, 62.5, 125.0])
+
+    async def test_enter_tier_below_min_merged(self):
+        # 低於交易所最低手數的前檔併入末檔（既有手數規則）
+        class MinMarketStub(StubAdapter):
+            async def fetch_market(self, symbol):
+                m = await super().fetch_market(symbol)
+                m["limits"] = {"amount": {"min": 0.1}}
+                return m
+
+        adapter = MinMarketStub()
+        om = OrderManager(adapter)
+        await om.enter(make_signal(), 0.4, tp_ratios=[30, 30, 30, 10])
+        tp_orders = [c for c in adapter.created if c["reduce_only"]]
+        self.assertEqual(len(tp_orders), 3)  # 末檔 0.04 併入上一檔
+        self.assertAlmostEqual(sum(o["qty"] for o in tp_orders), 0.4)
+
 
 class TestApplyModify(unittest.IsolatedAsyncioTestCase):
     """✏️ 訂單修改：跟隨分析師逐項修改，只動變化項（規則 2026-11-04）。"""
@@ -426,6 +466,40 @@ class TestTriggerRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adapter.created, [])
         self.assertTrue(any("設定錯誤" in s for s in notifier.sent), notifier.sent)
 
+    async def test_tp_ratios_passed_to_order_manager(self):
+        # risk_cfg 的 tp_ratios 生效：[100,0,0,0] → 只掛 1 檔 TP（全清）
+        notifier = RecordingNotifier()
+        adapter = StubAdapter()
+        router = TriggerRouter(adapter, OrderManager(adapter), notifier,
+                               risk_cfg={"tp_ratios": [100, 0, 0, 0]})
+        await router.on_signal(make_signal())
+        tp_orders = [c for c in adapter.created if c["reduce_only"]]
+        self.assertEqual(len(tp_orders), 1)
+        self.assertAlmostEqual(tp_orders[0]["qty"], 250.0)
+
+    async def test_invalid_tp_ratios_falls_back_to_equal(self):
+        # 非法比例（加總 120）不拒單：回退均分 4 檔
+        notifier = RecordingNotifier()
+        adapter = StubAdapter()
+        router = TriggerRouter(adapter, OrderManager(adapter), notifier,
+                               risk_cfg={"tp_ratios": [30, 30, 30, 30]})
+        await router.on_signal(make_signal())
+        tp_orders = [c for c in adapter.created if c["reduce_only"]]
+        self.assertEqual(len(tp_orders), 4)
+        self.assertTrue(any("已進場" in s for s in notifier.sent), notifier.sent)
+
+    async def test_system_min_tiers_follow_last_nonzero_ratio(self):
+        # 只填 TP1（[100,0,0,0]）→ 實際掛檔數 1 → 系統最低 = 0.001×1
+        adapter = StubAdapter()
+        self._market_with_min(adapter)
+        router = TriggerRouter(adapter, OrderManager(adapter), RecordingNotifier(),
+                               risk_cfg={"order_multiplier": 1.0,
+                                         "tp_ratios": [100, 0, 0, 0]})
+        with patch("autotrade.execution.trigger_router.validate") as m:
+            m.return_value = SimpleNamespace(accepted=True, qty=0.00256, reason="")
+            await router.on_signal(make_signal())
+        self.assertEqual(adapter.created[0]["qty"], 0.002)
+
 
     def _market_with_min(self, adapter, min_amount=0.001):
         adapter.fetch_market = AsyncMock(return_value={
@@ -436,8 +510,9 @@ class TestTriggerRouter(unittest.IsolatedAsyncioTestCase):
         })
 
     async def test_system_min_is_exchange_min_times_tp_tiers(self):
-        # 使用者規則：系統最低手數 = 交易所最低手數 × TP檔數 n，倍數跟檔數走
-        for n, expected in ((2, 0.002), (4, 0.004), (5, 0.005)):
+        # 使用者規則：系統最低手數 = 交易所最低手數 × 實際掛檔數 n
+        # （n = min(報單檔數, 最後一個非 0 的比例檔位)，上限 4）
+        for n, expected in ((2, 0.002), (4, 0.004), (5, 0.004)):
             with self.subTest(tiers=n):
                 adapter = StubAdapter()
                 self._market_with_min(adapter)

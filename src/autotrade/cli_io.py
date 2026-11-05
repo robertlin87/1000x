@@ -111,8 +111,8 @@ def choose_from_list(
 
 
 def read_menu_key() -> bytes:
-    """讀選單單鍵：1/2/3、回車、ESC。"""
+    """讀選單單鍵：1/2/3/4、回車、ESC。"""
     while True:
         k = read_key()
-        if k in (b"1", b"2", b"3", b"\r", b"\n", b"\x1b"):
+        if k in (b"1", b"2", b"3", b"4", b"\r", b"\n", b"\x1b"):
             return k

@@ -62,7 +62,7 @@ async def trade(adapter, symbol: str) -> None:
                  margin_pct=10.0, risk_pct=2.0, stop_dist_pct=5.0, analyst="selfcheck")
     om = OrderManager(adapter)
     try:
-        result = await om.enter(sig, qty)
+        result = await om.enter(sig, qty, tp_ratios=cfg.risk.get("tp_ratios"))
         print("1) 開倉+SL+TP 完成:", result)
         await asyncio.sleep(2)
         print("   持倉:", await adapter.fetch_position(symbol))

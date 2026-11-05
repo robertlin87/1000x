@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from ..exchange.base import ExchangeAdapter, NewOrder
-from ..risk.precision import round_down_qty, round_price, split_tier_qty
+from ..risk.precision import exchange_min_qty, plan_tp_tiers, round_down_qty, round_price
 
 log = logging.getLogger("autotrade.execution.order_manager")
 
@@ -20,8 +20,13 @@ class OrderManager:
     def __init__(self, adapter: ExchangeAdapter) -> None:
         self._adapter = adapter
 
-    async def enter(self, signal, qty: float) -> dict:
-        """進場。signal 需含 symbol/side/is_limit/entry/sl/leverage/tps。"""
+    async def enter(self, signal, qty: float,
+                    tp_ratios: list[float] | None = None) -> dict:
+        """進場。signal 需含 symbol/side/is_limit/entry/sl/leverage/tps。
+
+        tp_ratios：4 個百分比數字（加總 100，可含 0），決定各檔出場手數；
+        None = 均分（向後兼容，selfcheck 直調亦安全）。
+        """
         sym = signal.symbol
         side = "buy" if signal.side == "long" else "sell"
         close_side = "sell" if side == "buy" else "buy"
@@ -51,16 +56,14 @@ class OrderManager:
             # 獨立 SL（reduce-only 觸發單，數量=目前持倉）
             await self._adapter.attach_sl_tp(entry_id, sym, signal.sl, None)
 
-        # 掛 n 檔 TP reduce-only 限價單（前 n-1 檔 floor，末檔=剩餘）
+        # 掛 TP reduce-only 限價單：前 n-1 檔按止盈部位比例 floor，末檔全清剩餘
+        # （全平檔位 = 用戶最後一個非 0 檔與報單最後一檔取靠前者）
         tps = signal.tps or []
         tp_ids: list[str] = []
         if tps:
-            tiers = split_tier_qty(qty, len(tps))
-            tier_qty = [round_down_qty(t, amount_step) for t in tiers]
-            tier_qty[-1] = round(qty - sum(tier_qty[:-1]), 12)
-            for price, tq in zip(tps, tier_qty):
-                if tq <= 0:
-                    continue
+            exchange_min = exchange_min_qty(market, signal.entry)
+            plans = plan_tp_tiers(qty, tps, tp_ratios, amount_step, exchange_min)
+            for price, tq in plans:
                 tp_order = NewOrder(
                     symbol=sym, side=close_side, order_type="limit", qty=tq,
                     price=round_price(price, price_step), reduce_only=True,

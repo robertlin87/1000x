@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import logging
 
-from ..config import parse_multiplier
+from ..config import DEFAULT_TP_RATIOS, parse_multiplier, parse_tp_ratios
 from ..risk.engine import validate
-from ..risk.precision import calc_min_qty, round_down_qty
+from ..risk.precision import exchange_min_qty, last_positive_tier, round_down_qty
 
 log = logging.getLogger("autotrade.execution.trigger_router")
 
@@ -55,6 +55,16 @@ class TriggerRouter:
             await self._notifier.send(f"❌ 設定錯誤，跳過報單：{e}")
             return
 
+        # 止盈部位比例（使用者設定，預設 25/25/25/25）：非法不拒單，回退均分
+        # （均分 = 舊行為，安全預設）
+        try:
+            tp_ratios = parse_tp_ratios(
+                self._risk_cfg.get("tp_ratios", DEFAULT_TP_RATIOS)
+            )
+        except ValueError as e:
+            log.warning("止盈部位比例設定無效，回退均分 25/25/25/25：%s", e)
+            tp_ratios = list(DEFAULT_TP_RATIOS)
+
         amount_step = market.get("precision", {}).get("amount")
         raw_qty = decision.qty * multiplier
         # 算出的手數按交易所要求的手數精度向下取整（不四捨五入），
@@ -64,21 +74,14 @@ class TriggerRouter:
         # 手數上下限（使用者規則 2026-11-04，同日修正判斷閾值）：
         # - 交易所最低手數：amount.min 與交易所真實返回的 cost.min 折算取大者
         #   （交易所沒回傳 cost.min 時不再憑空用 5.0 兜底）
-        # - 系統最低手數 = 交易所最低手數 × TP檔數 n，保證 n 檔 TP 每檔都能
-        #   以交易所最低手數出場；倍數跟檔數走，不是固定 4
+        # - 系統最低手數 = 交易所最低手數 × 實際掛檔數 n，保證每檔都能以交易所
+        #   最低手數出場；n = min(報單檔數, 最後一個非 0 的比例檔位)，上限 4
         # - 算出的手數（已按精度向下取整）只要 < 系統最低手數，就按系統最低手數下單
         # - 高於最高手數 → 按最高手數交易
         limits = market.get("limits", {})
         amount_limits = limits.get("amount") or {}
-        n_tiers = max(1, len(signal.tps))
-        exchange_min = 0.0
-        if amount_limits.get("min"):
-            exchange_min = max(exchange_min, float(amount_limits["min"]))
-        cost_min = (limits.get("cost") or {}).get("min")
-        if cost_min:
-            exchange_min = max(
-                exchange_min, calc_min_qty(signal.entry, amount_step, float(cost_min))
-            )
+        exchange_min = exchange_min_qty(market, signal.entry)
+        n_tiers = max(1, min(len(signal.tps), last_positive_tier(tp_ratios)))
         system_min = round_down_qty(exchange_min * n_tiers, amount_step)
         if system_min > 0 and qty < system_min:
             qty = system_min
@@ -96,7 +99,7 @@ class TriggerRouter:
         log.info("下單倍數 x%s：風控手數 %s → 按步長 %s 向下取整後實際手數 %s",
                  multiplier, raw_qty, amount_step, qty)
 
-        result = await self._om.enter(signal, qty)
+        result = await self._om.enter(signal, qty, tp_ratios)
         await self._notifier.send(
             f"✅ 已進場 訂單{signal.order_id} {signal.symbol} "
             f"{'做多' if signal.side == 'long' else '做空'} qty={result['qty']} SL={signal.sl}"

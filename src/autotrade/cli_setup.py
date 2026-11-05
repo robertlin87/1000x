@@ -32,6 +32,13 @@ from .exchange.factory import get_adapter
 from .exchange.schemas import EXCHANGE_ORDER, EXCHANGE_SCHEMAS
 from .multiplier_prompt import prompt_multiplier, read_multiplier, save_multiplier
 from .signal_source.telegram_userbot import TelegramUserbotSource
+from .tp_ratios_prompt import (
+    format_tp_ratios,
+    prompt_tp_ratios,
+    read_tp_ratios,
+    read_tp_ratios_input,
+    save_tp_ratios,
+)
 
 logger = logging.getLogger("autotrade.setup")
 
@@ -149,6 +156,8 @@ def run_first_time_setup(config_path: str | Path) -> None:
     write_config(config_path, cfg)
     print("\n  設定已寫入，最後設定風險乘數 R（預設 1）…")
     prompt_multiplier(config_path)
+    print("\n  最後設定止盈部位比例（預設 25% / 25% / 25% / 25%）…")
+    prompt_tp_ratios(config_path)
     print("\n  設定完成，正在進入監聽…\n")
 
 
@@ -217,6 +226,7 @@ def prompt_startup_menu(config_path: str | Path) -> None:
 
     cfg = load_config(str(config_path))
     current = read_multiplier(config_path)
+    tp_current = read_tp_ratios(config_path)
     ex = cfg.exchanges if isinstance(cfg.exchanges, dict) else {}
     active = ex.get("active", "")
     exchange_label = EXCHANGE_SCHEMAS[active]["label"] if active in EXCHANGE_SCHEMAS else None
@@ -229,6 +239,7 @@ def prompt_startup_menu(config_path: str | Path) -> None:
     else:
         print("  按 2  改交易所（目前還未綁定交易所）")
     print(f"  按 3  改風險乘數（目前風險乘數：{current:g}）")
+    print(f"  按 4  改止盈部位比例（目前：{format_tp_ratios(tp_current)}）")
     print("  直接回車  開始監聽")
     print("-" * 46)
 
@@ -244,6 +255,9 @@ def prompt_startup_menu(config_path: str | Path) -> None:
             return
         if key == b"3":
             _menu_modify_multiplier(config_path)
+            return
+        if key == b"4":
+            _menu_modify_tp_ratios(config_path)
             return
         # read_menu_key 已過濾，僅合法鍵會到此處，正常不會到達
 
@@ -335,3 +349,17 @@ def _menu_modify_multiplier(config_path: Path) -> None:
         return
     save_multiplier(config_path, value)
     print(f"  風險乘數已儲存為 {value:g}。")
+
+
+def _menu_modify_tp_ratios(config_path: Path) -> None:
+    current = read_tp_ratios(config_path)
+    print(f"\n[改止盈部位比例] 目前：{format_tp_ratios(current)}")
+    vals = read_tp_ratios_input(current)
+    if vals is None:
+        print("  已取消修改止盈部位比例。")
+        return
+    if vals == current:
+        print("  未輸入，止盈部位比例保持不變。")
+        return
+    save_tp_ratios(config_path, vals)
+    print(f"  止盈部位比例已儲存為 {format_tp_ratios(vals)}。")
