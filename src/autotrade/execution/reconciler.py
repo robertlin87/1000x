@@ -1,13 +1,13 @@
-"""重启对账：DB 非终态持仓与交易所实态对齐，未处理事件重放。"""
+"""重啟對賬：DB 非終態持倉與交易所實態對齊，未處理事件重放。"""
 from __future__ import annotations
 
 
 class Reconciler:
-    """TODO M3：启动时
+    """TODO M3：啟動時
 
-    - DB 非终态 position vs 交易所 fetch_positions/fetch_open_orders
-    - DB 有、交易所无 → CLOSED（人工平仓场景）
-    - 交易所多余持仓 → UNKNOWN 记录并通知
+    - DB 非終態 position vs 交易所 fetch_positions/fetch_open_orders
+    - DB 有、交易所無 → CLOSED（人工平倉場景）
+    - 交易所多餘持倉 → UNKNOWN 記錄並通知
     - signal_ops.processed=0 的事件重放
     """
 

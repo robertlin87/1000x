@@ -1,4 +1,4 @@
-"""适配器工厂：按配置构造交易所适配器。"""
+"""適配器工廠：按設定構造交易所適配器。"""
 from __future__ import annotations
 
 from .base import ExchangeAdapter
@@ -12,7 +12,7 @@ from .gate import GateAdapter
 
 def get_adapter(exchange_name: str, api_config: dict,
                 proxy: dict | None = None) -> ExchangeAdapter:
-    """按交易所名构造适配器。api_config 为 config.yaml exchanges.<name> 段。"""
+    """按交易所名構造適配器。api_config 為 config.yaml exchanges.<name> 段。"""
     name = str(exchange_name).lower()
     if name == "bybit":
         return BybitAdapter(
@@ -53,4 +53,4 @@ def get_adapter(exchange_name: str, api_config: dict,
             secret=api_config.get("secret", ""),
             proxy=proxy,
         )
-    raise NotImplementedError(f"交易所适配器尚未实现：{exchange_name}")
+    raise NotImplementedError(f"交易所適配器尚未實現：{exchange_name}")

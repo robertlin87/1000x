@@ -1,21 +1,21 @@
-# 配置模板：复制为 config/config.yaml 后填写（config.yaml 不入库）
+# 設定模板：複製為 config/config.yaml 後填寫（config.yaml 不入庫）
 
 telegram:
-  session_name: autotrade_session   # Telethon 会话文件名
-  api_id: 0                          # 从 https://my.telegram.org 申请
+  session_name: autotrade_session   # Telethon 會話檔案名
+  api_id: 0                          # 從 https://my.telegram.org 申請
   api_hash: ""
-  # 信号群由开发者锁定（src/autotrade/constants.py），不可自定义
-  proxy:                             # TG 直连超时（被墙）时必开：本地代理/VPN
+  # 信號群由開發者鎖定（src/autotrade/constants.py），不可自定義
+  proxy:                             # 網絡連線設定（進階，一般保持預設）
     enabled: false
     type: socks5                     # socks5 | http
     addr: 127.0.0.1
-    port: 7890                       # Clash 默认 7890；v2rayN socks 10808 / http 10809
+    port: 7890                       # 連線端口
 
-dry_run: true                        # true = 只解析落库、不下单
+dry_run: true                        # true = 只解析落庫、不下單
 
 exchanges:
   active: bybit                      # bybit | binance | bitget | gate | deepcoin | bitunix
-  proxy:                             # 交易所 API 代理（大陆直连超时/被墙时必开）
+  proxy:                             # 網絡連線設定（進階，一般保持預設）
     enabled: false
     type: http                       # http | socks5
     addr: 127.0.0.1
@@ -43,24 +43,24 @@ exchanges:
 
 risk:
   max_concurrent_positions: 3
-  daily_loss_pct: 5.0                # 单日亏损上限（占总权益）
-  max_slippage_pct: 0.3              # 市价补单滑点阈值
-  margin_formula_tol_pct: 0.1        # 保证金复算校验容差
-  tp_ratios: equal                   # equal = n 档均分；或写死 [0.3, 0.3, 0.2, 0.2]
-  order_multiplier: 1.0              # 下单倍数：报单「控仓 x%」的 R 值缩放（0.5=减半，2=加倍）
-  watchdog_interval_sec: 30          # 看护轮询间隔：全平后清理交易所残留挂单
+  daily_loss_pct: 5.0                # 單日虧損上限（佔總權益）
+  max_slippage_pct: 0.3              # 市價補單滑點閾值
+  margin_formula_tol_pct: 0.1        # 保證金復算校驗容差
+  tp_ratios: equal                   # equal = n 檔均分；或寫死 [0.3, 0.3, 0.2, 0.2]
+  order_multiplier: 1.0              # 下單倍數：只能是大於 0 的數字（整數或小數）；手數由公式算出並按交易所精度向下取整
+  watchdog_interval_sec: 30          # 看護輪詢間隔：全平後清理交易所殘留掛單
 
 analysts:
-  allow_all: true                    # false 时仅跟 list 中的分析师
+  allow_all: true                    # false 時僅跟 list 中的分析師
   list: ["Lazycat", "Trader X"]
 
 behavior:
   amend_sl_on_move: true             # 自動移損/套保 → 改 SL
-  close_on_manual_close: true        # 🟥 已平倉/平仓 → 全平剩余 + 撤该 symbol 挂单
-  cancel_symbol_orders_on_terminal: true   # SL 或最终 TP 触发 → 撤该 symbol 全部挂单
+  close_on_manual_close: true        # 🟥 已平倉/平倉 → 全平剩餘 + 撤該 symbol 掛單
+  cancel_symbol_orders_on_terminal: true   # SL 或最終 TP 觸發 → 撤該 symbol 全部掛單
 
 notify:
-  send_to: ""                        # 执行回执发送的 TG 会话（可选，留空不通知）
+  send_to: ""                        # 執行回執發送的 TG 會話（可選，留空不通知）
 
 storage:
-  db_path: data/autotrade.db         # SQLite 库路径（信号/事件/持仓/审计）
+  db_path: data/autotrade.db         # SQLite 庫路徑（信號/事件/持倉/審計）

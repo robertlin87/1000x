@@ -1,7 +1,7 @@
-"""Gate 适配器：ccxt.gate（USDT-M 永续）。
+"""Gate 適配器：ccxt.gate（USDT-M 永續）。
 
-TP/SL 走独立 reduce-only 触发单；移动止损 = 撤旧触发单 + 重挂。
-注意事项：必须 API v4 Key；永续合约权限「读写」；合约账户需划 USDT 激活。
+TP/SL 走獨立 reduce-only 觸發單；移動止損 = 撤舊觸發單 + 重掛。
+注意事項：必須 API v4 Key；永續合約權限「讀寫」；合約帳戶需劃 USDT 激活。
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ log = logging.getLogger("autotrade.exchange.gate")
 class GateAdapter(ExchangeAdapter):
     def __init__(self, api_key: str, secret: str, proxy: dict | None = None) -> None:
         if not api_key or not secret:
-            raise ValueError("Gate apiKey/secret 未配置")
+            raise ValueError("Gate apiKey/secret 未設定")
         ccxt_cfg: dict = {
             "apiKey": api_key,
             "secret": secret,
@@ -36,7 +36,7 @@ class GateAdapter(ExchangeAdapter):
 
     @property
     def capabilities(self) -> dict:
-        # TP/SL 走独立 reduce-only 触发单（非 attached 分支）
+        # TP/SL 走獨立 reduce-only 觸發單（非 attached 分支）
         return {"supports_attached_sl": False}
 
     async def _ensure_markets(self) -> None:
@@ -58,7 +58,7 @@ class GateAdapter(ExchangeAdapter):
         base, _, settle = symbol.partition("/")
         return f"{base}{settle.split(':')[0]}"
 
-    # ---- 只读 ----
+    # ---- 只讀 ----
 
     async def fetch_equity(self) -> float:
         await self._ensure_markets()
@@ -70,7 +70,7 @@ class GateAdapter(ExchangeAdapter):
         await self._ensure_markets()
         s = self.to_ccxt_symbol(symbol)
         if s not in self._ex.markets:
-            raise ValueError(f"Gate 无此交易对（或已下架）：{s}")
+            raise ValueError(f"Gate 無此交易對（或已下架）：{s}")
         m = self._ex.markets[s]
         return {
             "symbol": s,
@@ -108,13 +108,13 @@ class GateAdapter(ExchangeAdapter):
         return str(res.get("id") or res.get("orderId") or "")
 
     async def attach_sl_tp(self, order_id: str, symbol: str, sl, tps) -> None:
-        """挂独立 SL：市价触发单 reduce-only（数量=当前持仓）。"""
+        """掛獨立 SL：市價觸發單 reduce-only（數量=目前持倉）。"""
         if sl is None:
             return
         await self._ensure_markets()
         pos = await self.fetch_position(symbol)
         if not pos or pos.get("qty", 0) <= 0:
-            log.warning("挂 SL 时无持仓：%s", symbol)
+            log.warning("掛 SL 時無持倉：%s", symbol)
             return
         close_side = "sell" if pos["side"] == "long" else "buy"
         await asyncio.to_thread(
@@ -122,17 +122,17 @@ class GateAdapter(ExchangeAdapter):
             "market", close_side, pos["qty"], None,
             {"stopPrice": sl, "reduceOnly": True},
         )
-        log.info("已挂独立 SL：%s @%s（qty=%s）", symbol, sl, pos["qty"])
+        log.info("已掛獨立 SL：%s @%s（qty=%s）", symbol, sl, pos["qty"])
 
     async def amend_order(self, order_id: str, symbol: str, **kwargs) -> None:
-        """移动止损 = 撤旧 SL 触发单 + 按新价重挂（Gate 无改 SL 端点）。"""
+        """移動止損 = 撤舊 SL 觸發單 + 按新價重掛（Gate 無改 SL 端點）。"""
         sl_price = kwargs.get("sl_price")
         if sl_price is None:
             raise ValueError("amend_order 需要 sl_price")
         await self._ensure_markets()
         pos = await self.fetch_position(symbol)
         if not pos or pos.get("qty", 0) <= 0:
-            log.warning("移动止损时无持仓：%s", symbol)
+            log.warning("移動止損時無持倉：%s", symbol)
             return
         open_orders = await self.fetch_open_orders(symbol)
         for o in open_orders:
@@ -144,7 +144,7 @@ class GateAdapter(ExchangeAdapter):
             "market", close_side, pos["qty"], None,
             {"stopPrice": sl_price, "reduceOnly": True},
         )
-        log.info("已移动止损：%s SL=%s", symbol, sl_price)
+        log.info("已移動止損：%s SL=%s", symbol, sl_price)
 
     async def cancel_order(self, order_id: str, symbol: str) -> None:
         await self._ensure_markets()

@@ -1,10 +1,9 @@
-"""JSONL 回放（M1 验收工具）：把 listen.py 采集的消息喂给解析管线，dry-run 验证。
+"""JSONL 回放（M1 驗收工具）：把採集好的群消息餵給解析管線，dry-run 驗證。
 
 用法：
-  python scripts/listen.py                     # 先采集真实消息到 data/messages.jsonl
-  python scripts/replay.py --input data/messages.jsonl
+  python scripts/replay.py --input data/messages.jsonl   # 輸入為歷史採集的真實消息
 
-默认写入 data/replay.db（不污染正式库）；--db 可指定。
+預設寫入 data/replay.db（不汙染正式庫）；--db 可指定。
 """
 from __future__ import annotations
 
@@ -33,14 +32,14 @@ if hasattr(sys.stdout, "reconfigure"):
 async def main() -> None:
     parser = argparse.ArgumentParser(description="JSONL 消息回放（dry-run）")
     parser.add_argument("--config", default="config/config.yaml")
-    parser.add_argument("--input", default="data/messages.jsonl", help="listen.py 采集的 JSONL")
-    parser.add_argument("--db", default="data/replay.db", help="回放库路径（默认 data/replay.db）")
+    parser.add_argument("--input", default="data/messages.jsonl", help="歷史採集的 JSONL 消息")
+    parser.add_argument("--db", default="data/replay.db", help="回放庫路徑（預設 data/replay.db）")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
     src = Path(args.input)
     if not src.exists():
-        log.error("输入文件不存在：%s（先跑 python scripts/listen.py 采集）", src)
+        log.error("輸入檔案不存在：%s", src)
         return
 
     db_path = Path(args.db)
@@ -64,7 +63,7 @@ async def main() -> None:
         )
         await pipeline.handle(raw)
         count += 1
-    log.info("回放完成：%s 条消息（事件库 %s）", count, db_path)
+    log.info("回放完成：%s 條消息（事件庫 %s）", count, db_path)
     await db.close()
 
 

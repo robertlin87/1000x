@@ -1,4 +1,4 @@
-"""PyInstaller 打包入口：启动 autotrade 应用（首次进向导，已配置直接监听）。"""
+"""PyInstaller 打包入口：啟動 autotrade 應用（首次進嚮導，已設定直接監聽）。"""
 from autotrade.app import main
 
 if __name__ == "__main__":

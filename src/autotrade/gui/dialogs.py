@@ -1,6 +1,6 @@
-"""GUI 对话框：跨线程提示弹窗。
+"""GUI 對話方塊：跨執行緒提示彈窗。
 
-信号群由开发者锁定（constants.py），无群选择对话框。
+訊號群由開發者鎖定（constants.py），無群選擇對話方塊。
 """
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from tkinter import messagebox, simpledialog
 
 
 class GuiPrompter:
-    """跨线程提示器：后台线程调 prompt() 时，经 queue 请求主线程弹窗。
+    """跨執行緒提示器：背景執行緒呼叫 prompt() 時，經由 queue 請求主執行緒彈窗。
 
-    用法：主线程周期调 poll()（用 root.after）；后台 asyncio 里
-    await to_thread(prompter.prompt, text) 会阻塞等待用户在主线程弹窗输入。
+    用法：主執行緒週期呼叫 poll()（用 root.after）；背景 asyncio 裡
+    await to_thread(prompter.prompt, text) 會阻塞等待使用者在主執行緒彈窗輸入。
     """
 
     def __init__(self, root: tk.Misc) -> None:
@@ -22,17 +22,17 @@ class GuiPrompter:
         self._res: queue.Queue[str] = queue.Queue()
 
     def prompt(self, text: str) -> str:
-        """同步阻塞：请求主线程弹窗，返回用户输入（可为空字符串）。"""
+        """同步阻塞：請求主執行緒彈窗，返回使用者輸入（可為空字串）。"""
         self._req.put(text)
         return self._res.get()
 
     def poll(self) -> None:
-        """主线程周期调用，处理待弹窗请求。"""
+        """主執行緒週期呼叫，處理待彈窗請求。"""
         try:
             text = self._req.get_nowait()
         except queue.Empty:
             return
-        result = simpledialog.askstring("请输入", text, parent=self._root)
+        result = simpledialog.askstring("請輸入", text, parent=self._root)
         self._res.put(result or "")
 
 

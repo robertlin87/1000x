@@ -1,7 +1,7 @@
-"""外部目录管理：配置、会话、数据、日志的路径解析。
+"""外部目錄管理：設定、會話、數據、日誌的路徑解析。
 
-打包成 exe 后，程序运行目录可能是只读的临时目录，因此 config/session/data
-写到用户可写目录 %APPDATA%/autotrade/；开发环境沿用项目根目录。
+打包成 exe 後，程序運行目錄可能是隻讀的臨時目錄，因此 config/session/data
+寫到使用者可寫目錄 %APPDATA%/autotrade/；開發環境沿用項目根目錄。
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ def _is_frozen() -> bool:
 
 
 def app_dir() -> Path:
-    """应用数据根目录：打包后 %APPDATA%/autotrade，开发时项目根目录。"""
+    """應用數據根目錄：打包後 %APPDATA%/autotrade，開發時項目根目錄。"""
     if _is_frozen():
         base = os.environ.get("APPDATA") or str(Path.home())
         return Path(base) / "autotrade"
@@ -32,7 +32,7 @@ def config_path() -> Path:
 
 
 def session_path(name: str = "autotrade_session") -> str:
-    """Telethon 会话文件路径（绝对路径，避免打包后写到临时目录）。"""
+    """Telethon 會話檔案路徑（絕對路徑，避免打包後寫到臨時目錄）。"""
     return str(app_dir() / name)
 
 
@@ -49,15 +49,15 @@ def logs_dir() -> Path:
 
 
 def temp_dir() -> Path:
-    """临时文件目录：日志与问题报告（源码版 = 项目根/temp；打包版 = 应用数据目录/temp）。"""
+    """臨時檔案目錄：日誌與問題報告（原始碼版 = 項目根/temp；打包版 = 應用數據目錄/temp）。"""
     return app_dir() / "temp"
 
 
 def cleanup_temp_dir() -> None:
-    """每日清理：删除 temp 内修改时间非今天的文件（只保留当天）。
+    """每日清理：刪除 temp 內修改時間非今天的檔案（只保留當天）。
 
-    用户规则（2026-11-04）：旧日志/报告在问题解决后无意义，用户不会自己
-    清理——每次启动时清掉昨天及更早的文件。
+    使用者規則（2026-11-04）：舊日誌/報告在問題解決後無意義，使用者不會自己
+    清理——每次啟動時清掉昨天及更早的檔案。
     """
     d = temp_dir()
     if not d.exists():

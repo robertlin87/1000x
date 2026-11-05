@@ -1,9 +1,9 @@
-"""问题报告生成：扫描 temp 日志，聚合去重错误 + 密钥脱敏，导出 txt。
+"""問題報告生成：掃描 temp 日誌，聚合去重錯誤 + 密鑰脫敏，導出 txt。
 
-用户规则（2026-11-04）：
-- 原始日志不去重（每次发生都记录）；去重发生在报告层——同一错误
-  聚合为一行带次数，粉丝贴给你的报告不会是大段重复
-- 报告是一次性快照，写入 temp 目录，粉丝把 txt 发给你即可
+使用者規則（2026-11-04）：
+- 原始日誌不去重（每次發生都記錄）；去重發生在報告層——同一錯誤
+  聚合為一行帶次數，粉絲貼給你的報告不會是大段重複
+- 報告是一次性快照，寫入 temp 目錄，粉絲把 txt 發給你即可
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from pathlib import Path
 
 from . import paths
 from .constants import VERSION
+from .logfile import scrub_network_words
 
 log = logging.getLogger("autotrade.report")
 
@@ -25,7 +26,7 @@ _LOG_LINE_RE = re.compile(
 
 
 def _secret_values() -> list[str]:
-    """从配置收集需要脱敏的值（apiKey/secret/passphrase/api_hash）。"""
+    """從設定收集需要脫敏的值（apiKey/secret/passphrase/api_hash）。"""
     values: list[str] = []
     try:
         from .config import load_config
@@ -59,7 +60,7 @@ def _log_files() -> list[Path]:
 
 
 def _iter_log_lines():
-    """遍历全部日志文件，产出 (ts, level, name, msg, raw)。"""
+    """遍歷全部日誌檔案，產出 (ts, level, name, msg, raw)。"""
     for f in _log_files():
         try:
             for raw in f.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -71,7 +72,7 @@ def _iter_log_lines():
 
 
 def _error_summary(lines) -> str:
-    """错误摘要：按签名（logger + 消息前 80 字符）聚合去重，按次数排序。"""
+    """錯誤摘要：按簽名（logger + 消息前 80 字符）聚合去重，按次數排序。"""
     groups: dict[str, dict] = {}
     for ts, level, name, msg, _raw in lines:
         if level not in ("ERROR", "CRITICAL", "WARNING"):
@@ -86,12 +87,12 @@ def _error_summary(lines) -> str:
     items = sorted(groups.values(), key=lambda g: -g["count"])
     out = []
     for g in items[:20]:
-        out.append(f"[发生 {g['count']} 次] {g['first']} ~ {g['last']} {g['level']}: {g['msg'][:200]}")
-    return "\n".join(out) if out else "（无 ERROR/WARNING 记录）"
+        out.append(f"[發生 {g['count']} 次] {g['first']} ~ {g['last']} {g['level']}: {g['msg'][:200]}")
+    return "\n".join(out) if out else "（無 ERROR/WARNING 記錄）"
 
 
 def collect_report() -> str:
-    """生成报告全文（含脱敏）。"""
+    """生成報告全文（含脫敏）。"""
     lines = list(_iter_log_lines())
     exchange = ""
     try:
@@ -101,21 +102,22 @@ def collect_report() -> str:
     except Exception:
         pass
     head = (
-        "加密林教头VIP跟单助手 问题报告\n"
-        f"版本: {VERSION} | 时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"系统: {platform.system()} {platform.release()} | Python {sys.version.split()[0]}\n"
-        f"交易所: {exchange or '未配置'}\n"
+        "加密林教頭VIP跟單助手 問題報告\n"
+        f"版本: {VERSION} | 時間: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"系統: {platform.system()} {platform.release()} | Python {sys.version.split()[0]}\n"
+        f"交易所: {exchange or '未設定'}\n"
         f"{'=' * 60}\n"
     )
-    body = "【错误摘要（去重聚合）】\n" + _error_summary(lines) + "\n"
-    tail = "\n【最近日志（上下文）】\n" + "\n".join(r for *_x, r in lines[-100:])
-    return _scrub(head + body + tail, _secret_values())
+    body = "【錯誤摘要（去重聚合）】\n" + _error_summary(lines) + "\n"
+    tail = "\n【最近日誌（上下文）】\n" + "\n".join(r for *_x, r in lines[-100:])
+    # 歷史日誌（本次改動前寫入的）也可能含本機網絡連線細節，導出前統一清洗
+    return scrub_network_words(_scrub(head + body + tail, _secret_values()))
 
 
 def write_report_file() -> Path:
-    """生成报告写入 temp 目录，返回文件路径。"""
+    """生成報告寫入 temp 目錄，返回檔案路徑。"""
     paths.ensure_dirs()
     path = paths.temp_dir() / f"autotrade-report-{datetime.now().strftime('%Y%m%d-%H%M%S')}.txt"
     path.write_text(collect_report(), encoding="utf-8")
-    log.info("问题报告已生成：%s", path)
+    log.info("問題報告已生成：%s", path)
     return path

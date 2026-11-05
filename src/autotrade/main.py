@@ -1,9 +1,9 @@
-"""主程序装配：双通道消息 → 三类解析器 → SQLite 统一事件层 → TriggerRouter → 执行。
+"""主程序裝配：雙通道消息 → 三類解析器 → SQLite 統一事件層 → TriggerRouter → 執行。
 
-主触发（价格）由 M2 交易所挂单承担；本层是备份核对与人为指令通道。
-数据流：Userbot(NewMessage+MessageEdited) → Entry/Notice/Op 解析器 →
-signal_ops 幂等事件层 → TriggerRouter → OrderManager。
-dry_run=true 时用 NoopAdapter（全链路不碰交易所），只记录通知。
+主觸發（價格）由 M2 交易所掛單承擔；本層是備份核對與人為指令通道。
+數據流：Userbot(NewMessage+MessageEdited) → Entry/Notice/Op 解析器 →
+signal_ops 冪等事件層 → TriggerRouter → OrderManager。
+dry_run=true 時用 NoopAdapter（全鏈路不碰交易所），只記錄通知。
 """
 from __future__ import annotations
 
@@ -32,27 +32,27 @@ log = logging.getLogger("autotrade")
 
 
 class MessagePipeline:
-    """消息 → 事件：三类消息解析 + 统一事件层（幂等）→ router 触发动作。"""
+    """消息 → 事件：三類消息解析 + 統一事件層（冪等）→ router 觸發動作。"""
 
     def __init__(self, db, notifier: Notifier, router=None) -> None:
         self._db = db
         self._notifier = notifier
-        self._router = router  # TriggerRouter；None 表示纯 dry-run 记录
+        self._router = router  # TriggerRouter；None 表示純 dry-run 記錄
         self._entry = EntryParser()
         self._notice = NoticeParser()
         self._op = OpParser()
 
     async def handle(self, raw: RawMessage) -> None:
-        """信号源入口。单条消息异常不得中断监听。"""
+        """信號源入口。單條消息異常不得中斷監聽。"""
         try:
             if raw.is_edit:
                 await self._handle_edit(raw)
             else:
                 await self._handle_new(raw)
         except Exception:
-            log.exception("消息处理失败 (msg_id=%s)：%s", raw.msg_id, raw.text[:80])
+            log.exception("消息處理失敗 (msg_id=%s)：%s", raw.msg_id, raw.text[:80])
 
-    # ---- 新消息通道：报单 or 紧凑通知 ----
+    # ---- 新消息通道：報單 or 緊湊通知 ----
 
     async def _handle_new(self, raw: RawMessage) -> None:
         signal = self._entry.parse(raw.text)
@@ -75,7 +75,7 @@ class MessagePipeline:
             )
             if inserted:
                 await self._notifier.send(
-                    f"📌订单 {notice.order_id} {notice.symbol} "
+                    f"📌訂單 {notice.order_id} {notice.symbol} "
                     f"{'做多' if notice.side == 'long' else '做空'} {notice.action_type}（notice 通道）"
                 )
                 if self._router:
@@ -88,11 +88,11 @@ class MessagePipeline:
                     await self._apply_modify_db(raw.chat_id, notice.order_id,
                                                 old_signal, notice.mod_fields)
             else:
-                log.info("重复事件（幂等忽略）：%s", notice.raw_text[:60])
+                log.info("重複事件（冪等忽略）：%s", notice.raw_text[:60])
             return
-        log.info("未识别消息 (msg_id=%s)：%s", raw.msg_id, raw.text[:80].replace("\n", " ⏎ "))
+        log.info("未識別消息 (msg_id=%s)：%s", raw.msg_id, raw.text[:80].replace("\n", " ⏎ "))
 
-    # ---- 编辑通道：报单 upsert + 操作行差量事件 ----
+    # ---- 編輯通道：報單 upsert + 操作行差量事件 ----
 
     async def _handle_edit(self, raw: RawMessage) -> None:
         signal = self._entry.parse(raw.text)
@@ -105,8 +105,8 @@ class MessagePipeline:
             if op.action_type == "ignore":
                 continue
             if op.action_type == "unknown":
-                # 未匹配行落库供模板补齐；每次编辑重复出现只记一次
-                log.info("未匹配操作行（供模板补齐）：%s", op.line_text.strip()[:80])
+                # 未匹配行落庫供模板補齊；每次編輯重複出現只記一次
+                log.info("未匹配操作行（供模板補齊）：%s", op.line_text.strip()[:80])
                 if order_id:
                     await add_signal_op(
                         self._db, raw.chat_id, order_id,
@@ -116,7 +116,7 @@ class MessagePipeline:
                     )
                 continue
             if not order_id:
-                log.warning("操作行缺 order_id，跳过：%s", op.line_text.strip()[:80])
+                log.warning("操作行缺 order_id，跳過：%s", op.line_text.strip()[:80])
                 continue
             old_signal = None
             if op.action_type == "modify":
@@ -133,7 +133,7 @@ class MessagePipeline:
                 detail = f" TP{op.tp_index}" if op.tp_index else ""
                 price = f" @{op.price}" if op.price else ""
                 await self._notifier.send(
-                    f"✏️订单 {order_id} {op.action_type}{detail}{price}（edit 通道）"
+                    f"✏️訂單 {order_id} {op.action_type}{detail}{price}（edit 通道）"
                 )
                 if self._router:
                     symbol = signal.symbol if signal else None
@@ -145,10 +145,10 @@ class MessagePipeline:
                     await self._apply_modify_db(raw.chat_id, order_id,
                                                 old_signal, op.mod_fields)
             else:
-                log.info("重复事件（幂等忽略）：%s", op.line_text.strip()[:60])
+                log.info("重複事件（冪等忽略）：%s", op.line_text.strip()[:60])
 
     async def _apply_modify_db(self, chat_id: int, order_id: str, old_signal, mod_fields) -> None:
-        """訂單修改后同步 signals 表的 tps/sl/entry（后续修改以此为旧值）。"""
+        """訂單修改後同步 signals 表的 tps/sl/entry（後續修改以此為舊值）。"""
         fields = mod_fields or {}
         new_tp_prices = [p for _, p in sorted(fields.get("tps") or [])]
         if not new_tp_prices and old_signal is not None:
@@ -166,10 +166,10 @@ class MessagePipeline:
         warnings = self._entry.validate(signal)
         inserted = await upsert_signal(self._db, raw.chat_id, signal)
         if not inserted:
-            log.info("已知报单更新 raw_text：订单%s", signal.order_id)
+            log.info("已知報單更新 raw_text：訂單%s", signal.order_id)
             return
         text = (
-            f"🆕新报单 订单{signal.order_id} {signal.symbol} "
+            f"🆕新報單 訂單{signal.order_id} {signal.symbol} "
             f"{'做多' if signal.side == 'long' else '做空'} entry={signal.entry} "
             f"{'掛單' if signal.is_limit else '現價'} SL={signal.sl} "
             f"TP={'/'.join(map(str, signal.tps))} 控倉{signal.risk_pct}% "
@@ -183,10 +183,10 @@ class MessagePipeline:
 
 
 async def run(config_path: str | None = None) -> None:
-    """启动跟单主程序。config_path 缺省时用外部目录的 config.yaml。"""
+    """啟動跟單主程序。config_path 缺省時用外部目錄的 config.yaml。"""
     paths.ensure_dirs()
-    paths.cleanup_temp_dir()  # 每日清理：只保留当天的日志/报告
-    install_file_logging()  # 日志落盘 temp/autotrade.log（问题报告的数据来源）
+    paths.cleanup_temp_dir()  # 每日清理：只保留當天的日誌/報告
+    install_file_logging()  # 日誌落盤 temp/autotrade.log（問題報告的數據來源）
     config_path = config_path or str(paths.config_path())
     cfg = load_config(config_path)
     db_path = Path(cfg.storage.get("db_path", str(paths.db_path())))
@@ -194,7 +194,7 @@ async def run(config_path: str | None = None) -> None:
     db = await init_db(str(db_path))
     notifier = Notifier(dry_run=cfg.dry_run, send_to=cfg.notify.get("send_to"))
 
-    # M2 执行层：dry_run 用 NoopAdapter（不碰交易所），否则接真实交易所
+    # M2 執行層：dry_run 用 NoopAdapter（不碰交易所），否則接真實交易所
     if cfg.dry_run:
         adapter = NoopAdapter()
     else:
@@ -206,7 +206,7 @@ async def run(config_path: str | None = None) -> None:
 
     pipeline = MessagePipeline(db, notifier, router)
 
-    # 看护轮询（无状态，交易所为唯一事实源）：止损/末档 TP 全平后清理残留挂单
+    # 看護輪詢（無狀態，交易所為唯一事實源）：止損/末檔 TP 全平後清理殘留掛單
     watchdog_task = None
     if not cfg.dry_run:
         watchdog = Watchdog(
@@ -216,7 +216,7 @@ async def run(config_path: str | None = None) -> None:
         watchdog_task = asyncio.create_task(watchdog.run())
 
     tg = cfg.telegram
-    # 信号群由 constants 锁定（开发者固定），忽略配置文件里的 chat_title/chat_id
+    # 信號群由 constants 鎖定（開發者固定），忽略設定檔案裡的 chat_title/chat_id
     source = TelegramUserbotSource(
         handler=pipeline.handle,
         api_id=int(tg.get("api_id", 0)),

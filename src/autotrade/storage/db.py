@@ -1,9 +1,9 @@
 """SQLite 持久化。
 
-- signals：报单，去重键 UNIQUE(chat_id, order_id)；编辑事件 upsert 更新 raw_text
-- signal_ops：统一事件层，编辑行与新消息通知都进此层，UNIQUE(chat_id, order_id, line_hash)
-  幂等——仅新增事件触发动作
-- orders / positions / events：订单、持仓（tp_hit_count、remaining_qty）、审计
+- signals：報單，去重鍵 UNIQUE(chat_id, order_id)；編輯事件 upsert 更新 raw_text
+- signal_ops：統一事件層，編輯行與新消息通知都進此層，UNIQUE(chat_id, order_id, line_hash)
+  冪等——僅新增事件觸發動作
+- orders / positions / events：訂單、持倉（tp_hit_count、remaining_qty）、審計
 """
 from __future__ import annotations
 
@@ -74,11 +74,11 @@ async def init_db(path: str) -> aiosqlite.Connection:
 
 
 async def upsert_signal(db: aiosqlite.Connection, chat_id: int, signal) -> bool:
-    """插入报单；编辑事件按 (chat_id, order_id) upsert，仅刷新 raw_text。
+    """插入報單；編輯事件按 (chat_id, order_id) upsert，僅刷新 raw_text。
 
-    返回 True=新报单，False=已知报单（编辑更新）。
-    注意：ON CONFLICT DO UPDATE 的 rowcount 对插入和更新都算 1，
-    所以用 INSERT OR IGNORE 的 rowcount（忽略时=0）区分新旧。
+    返回 True=新報單，False=已知報單（編輯更新）。
+    注意：ON CONFLICT DO UPDATE 的 rowcount 對插入和更新都算 1，
+    所以用 INSERT OR IGNORE 的 rowcount（忽略時=0）區分新舊。
     """
     cur = await db.execute(
         """INSERT OR IGNORE INTO signals
@@ -116,9 +116,9 @@ async def add_signal_op(
     price: float | None = None,
     ts_text: str = "",
 ) -> bool:
-    """写入统一事件层。返回 True=新事件（需触发动作），False=重复（幂等忽略）。
+    """寫入統一事件層。返回 True=新事件（需觸發動作），False=重複（冪等忽略）。
 
-    UNIQUE(chat_id, order_id, line_hash) + INSERT OR IGNORE：编辑行与新消息
+    UNIQUE(chat_id, order_id, line_hash) + INSERT OR IGNORE：編輯行與新消息
     通知的同一操作只算一次。
     """
     cur = await db.execute(
@@ -134,7 +134,7 @@ async def add_signal_op(
 
 
 async def get_signal(db: aiosqlite.Connection, chat_id: int, order_id: str):
-    """取报单（供訂單修改 diff 旧值）。无记录返回 None。
+    """取報單（供訂單修改 diff 舊值）。無記錄返回 None。
 
     返回 types.SimpleNamespace，含 symbol/side/entry/sl/tps。
     """
@@ -162,7 +162,7 @@ async def update_signal_fields(
     sl: float,
     entry: float,
 ) -> None:
-    """訂單修改后同步 signals 表的 tps/sl/entry（后续修改以此为旧值）。"""
+    """訂單修改後同步 signals 表的 tps/sl/entry（後續修改以此為舊值）。"""
     await db.execute(
         "UPDATE signals SET tps_json=?, sl=?, entry=?, updated_at=datetime('now') "
         "WHERE chat_id=? AND order_id=?",

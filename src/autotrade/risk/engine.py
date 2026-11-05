@@ -1,9 +1,9 @@
-"""风控引擎。
+"""風控引擎。
 
-手数公式（用户指定）：
-    张数 = equity × R% ÷ |建仓价 − 止损价| ÷ 合约倍数
-R% = 报单「控仓维持 x% 风控」的 x；合约倍数 = 各交易所每张合约的币数
-（ccxt market['contractSize']，各所不同）；向下取整到整数张。
+手數公式（使用者指定）：
+    張數 = equity × R% ÷ |建倉價 − 止損價| ÷ 合約倍數
+R% = 報單「控倉維持 x% 風控」的 x；合約倍數 = 各交易所每張合約的幣數
+（ccxt market['contractSize']，各所不同）；向下取整到整數張。
 """
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ def calc_contract_qty(
     stop: float,
     contract_size: float,
 ) -> int:
-    """按 R% 风控与止损距离计算合约张数（向下取整）。"""
+    """按 R% 風控與止損距離計算合約張數（向下取整）。"""
     if contract_size <= 0 or entry == stop:
         return 0
     coins = equity * (risk_pct / 100.0) / abs(entry - stop)
@@ -32,10 +32,10 @@ def check_margin_formula(
     leverage: int,
     tol_pct: float = 0.1,
 ) -> bool:
-    """保证金复算校验：margin_pct ≈ risk_pct / (stop_dist_pct × leverage)。
+    """保證金復算校驗：margin_pct ≈ risk_pct / (stop_dist_pct × leverage)。
 
-    三条真实样例均吻合（订单216：7.61 ≈ 2.00/(2.63×10)=7.60）。超差说明
-    信号有误或模板误配，应 reject。
+    三條真實樣例均吻合（訂單216：7.61 ≈ 2.00/(2.63×10)=7.60）。超差說明
+    信號有誤或模板誤配，應 reject。
     """
     if stop_dist_pct <= 0 or leverage <= 0:
         return False
@@ -59,59 +59,61 @@ def validate(
     analysts_cfg: dict | None = None,
     daily_pnl: float = 0.0,
 ) -> RiskDecision:
-    """M2 风控校验，返回 RiskDecision(accepted, reason, qty)。
+    """M2 風控校驗，返回 RiskDecision(accepted, reason, qty)。
 
-    依次检查：
-      1. 分析师白名单（allow_all=false 时生效）
-      2. 同 symbol 反向信号拒单
-      3. 并发持仓上限（按不同 symbol 数计）
-      4. 保证金复算校验（复用 check_margin_formula）
-      5. 手数 = calc_contract_qty + minNotional（名义值下限）
-      6. 日亏上限（daily_pnl 负值超过阈值则拒）
+    依次檢查：
+      1. 分析師白名單（allow_all=false 時生效）
+      2. 同 symbol 反向信號拒單
+      3. 併發持倉上限（按不同 symbol 數計）
+      4. 保證金復算校驗（複用 check_margin_formula）
+      5. 手數 = calc_contract_qty + minNotional（名義值下限）
+      6. 日虧上限（daily_pnl 負值超過閾值則拒）
 
-    手数公式与保证金复算已实现并有测试，此处直接复用。
-    open_positions 元素需含 symbol 与 side（"long"/"short"）。
+    手數公式與保證金復算已實現並有測試，此處直接複用。
+    open_positions 元素需含 symbol 與 side（"long"/"short"）。
     """
     risk_cfg = risk_cfg or {}
     analysts_cfg = analysts_cfg or {}
     open_positions = open_positions or []
 
-    # 1) 分析师白名单
+    # 1) 分析師白名單
     if not analysts_cfg.get("allow_all", True):
         allow = analysts_cfg.get("list", [])
         if signal.analyst not in allow:
-            return RiskDecision(False, f"分析师不在白名单：{signal.analyst}")
+            return RiskDecision(False, f"分析師不在白名單：{signal.analyst}")
 
-    # 2) 同 symbol 反向信号
+    # 2) 同 symbol 反向信號
     for pos in open_positions:
         if pos.get("symbol") == signal.symbol and pos.get("side") != signal.side:
-            return RiskDecision(False, f"同 symbol 反向信号拒单：{signal.symbol}")
+            return RiskDecision(False, f"同 symbol 反向信號拒單：{signal.symbol}")
 
-    # 3) 并发持仓上限（按不同 symbol 数计）
+    # 3) 併發持倉上限（按不同 symbol 數計）
     max_pos = int(risk_cfg.get("max_concurrent_positions", 3))
     held_symbols = {pos.get("symbol") for pos in open_positions}
     if signal.symbol not in held_symbols and len(held_symbols) >= max_pos:
-        return RiskDecision(False, f"并发持仓达上限 {max_pos}")
+        return RiskDecision(False, f"併發持倉達上限 {max_pos}")
 
-    # 4) 保证金复算校验
+    # 4) 保證金復算校驗
     tol = float(risk_cfg.get("margin_formula_tol_pct", 0.1))
     if not check_margin_formula(
         signal.margin_pct, signal.risk_pct, signal.stop_dist_pct, signal.leverage, tol
     ):
-        return RiskDecision(False, "保证金复算超差")
+        return RiskDecision(False, "保證金復算超差")
 
-    # 5) 手数 + minNotional
+    # 5) 手數 + minNotional
     qty = calc_contract_qty(equity, signal.risk_pct, signal.entry, signal.sl, contract_size)
-    if qty <= 0:
-        return RiskDecision(False, "手数计算为 0（风控金额或价差异常）")
-    min_notional = float(risk_cfg.get("min_notional", 5.0))
-    notional = qty * contract_size * signal.entry
-    if notional < min_notional:
-        return RiskDecision(False, f"名义值过小：{notional:.2f} < {min_notional}")
+    # qty=0 不再在這裡拒單：按使用者規則「手數低於系統最低手數就按系統最低手數
+    # 下單」，0 也屬於低於，交給 TriggerRouter 的 system_min 託底。
+    # 若交易所沒給任何下限（system_min 也是 0），執行層會跳過下單並告警。
+    if qty > 0:
+        min_notional = float(risk_cfg.get("min_notional", 5.0))
+        notional = qty * contract_size * signal.entry
+        if notional < min_notional:
+            return RiskDecision(False, f"名義值過小：{notional:.2f} < {min_notional}")
 
-    # 6) 日亏上限
+    # 6) 日虧上限
     daily_loss_pct = float(risk_cfg.get("daily_loss_pct", 5.0))
     if daily_pnl < 0 and abs(daily_pnl) >= equity * daily_loss_pct / 100.0:
-        return RiskDecision(False, "当日亏损已达上限")
+        return RiskDecision(False, "當日虧損已達上限")
 
     return RiskDecision(True, "", qty)

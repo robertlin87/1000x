@@ -1,12 +1,12 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller 打包配置：打包为 onedir 单目录（含 autotrade.exe + 依赖）。"""
+"""PyInstaller 打包設定：打包為 onedir 單目錄（含 autotrade.exe + 依賴）。"""
 from PyInstaller.utils.hooks import collect_all
 
 datas = []
 binaries = []
 hiddenimports = []
 
-# ccxt / telethon 有大量动态导入与数据文件，collect_all 全部收集
+# ccxt / telethon 有大量動態導入與數據檔案，collect_all 全部收集
 for pkg in ("ccxt", "telethon", "ruamel.yaml", "aiosqlite"):
     d, b, h = collect_all(pkg)
     datas += d
@@ -38,7 +38,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,  # GUI 窗口应用，无黑控制台；日志在应用窗口内显示
+    console=False,  # GUI 視窗應用，無黑控制檯；日誌在應用視窗內顯示
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

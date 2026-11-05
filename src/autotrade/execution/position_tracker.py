@@ -1,8 +1,8 @@
-"""持仓状态机。
+"""持倉狀態機。
 
 state ∈ {PENDING, FILLED, PARTIAL_TP, BREAKEVEN, CLOSED, CANCELED, UNKNOWN}
-- 主触发（价格）：TP 档成交 / SL 触发 / 末档 TP 成交 → 撤该 symbol 其余挂单
-- 备份触发（事件核对）：动作前先查交易所实际状态再决定，杜绝双卖
+- 主觸發（價格）：TP 檔成交 / SL 觸發 / 末檔 TP 成交 → 撤該 symbol 其餘掛單
+- 備份觸發（事件核對）：動作前先查交易所實際狀態再決定，杜絕雙賣
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class PositionState(StrEnum):
 
 
 class Position:
-    """单个 symbol 的持仓状态（内存态，配合 DB positions 表持久化）。"""
+    """單個 symbol 的持倉狀態（內存態，配合 DB positions 表持久化）。"""
 
     def __init__(self, symbol: str, side: str, qty: float, entry_price: float,
                  sl_price: float | None = None) -> None:
@@ -35,7 +35,7 @@ class Position:
 
 
 class PositionTracker:
-    """按 symbol 维护持仓状态与 TP 档计数。"""
+    """按 symbol 維護持倉狀態與 TP 檔計數。"""
 
     def __init__(self) -> None:
         self._positions: dict[str, Position] = {}

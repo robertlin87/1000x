@@ -1,4 +1,4 @@
-"""管线单测：双通道（编辑行 + 新消息通知）同一操作只触发一次（M1 验收）。"""
+"""管線單測：雙通道（編輯行 + 新消息通知）同一操作只觸發一次（M1 驗收）。"""
 import unittest
 from pathlib import Path
 
@@ -24,7 +24,7 @@ class RecordingNotifier(Notifier):
 
 
 def raw(text: str, msg_id: int, is_edit: bool) -> RawMessage:
-    return RawMessage(chat_id=12345, chat_title="信号群", sender_id=1,
+    return RawMessage(chat_id=12345, chat_title="信號群", sender_id=1,
                       msg_id=msg_id, text=text, ts="", is_edit=is_edit)
 
 
@@ -36,26 +36,26 @@ class TestPipelineDedup(unittest.IsolatedAsyncioTestCase):
         edit_text = load("order_187_syn_short.txt")
         notice_text = load("notice_187_close.txt")
 
-        # 1) 编辑通道：报单 + 操作行（含 🟥 已平倉）
+        # 1) 編輯通道：報單 + 操作行（含 🟥 已平倉）
         await p.handle(raw(edit_text, 100, is_edit=True))
-        # 2) 新消息通道：紧凑通知同操作
+        # 2) 新消息通道：緊湊通知同操作
         await p.handle(raw(notice_text, 101, is_edit=False))
-        # 3) 再次编辑同内容（重复推送）
+        # 3) 再次編輯同內容（重複推送）
         await p.handle(raw(edit_text, 100, is_edit=True))
 
         closes = [s for s in notifier.sent if "close" in s]
-        self.assertEqual(len(closes), 1, f"close 应只触发一次：{notifier.sent}")
+        self.assertEqual(len(closes), 1, f"close 應只觸發一次：{notifier.sent}")
         await db.close()
 
     async def test_edit_then_notice_order_independent(self):
-        # 反向顺序：先通知后编辑，同样只触发一次
+        # 反向順序：先通知後編輯，同樣只觸發一次
         db = await init_db(":memory:")
         notifier = RecordingNotifier()
         p = MessagePipeline(db, notifier)
         await p.handle(raw(load("notice_188_close.txt"), 1, is_edit=False))
         await p.handle(raw(load("order_188_giggle_long.txt"), 2, is_edit=True))
         closes = [s for s in notifier.sent if "close" in s]
-        self.assertEqual(len(closes), 1, f"close 应只触发一次：{notifier.sent}")
+        self.assertEqual(len(closes), 1, f"close 應只觸發一次：{notifier.sent}")
         await db.close()
 
     async def test_new_entry_signal_recorded(self):
@@ -63,10 +63,10 @@ class TestPipelineDedup(unittest.IsolatedAsyncioTestCase):
         notifier = RecordingNotifier()
         p = MessagePipeline(db, notifier)
         await p.handle(raw(load("order_216_lit_long.txt"), 3, is_edit=False))
-        self.assertTrue(any("新报单" in s for s in notifier.sent))
-        # 同一报单重复推送 → 不重复通知
+        self.assertTrue(any("新報單" in s for s in notifier.sent))
+        # 同一報單重複推送 → 不重複通知
         await p.handle(raw(load("order_216_lit_long.txt"), 4, is_edit=False))
-        self.assertEqual(sum("新报单" in s for s in notifier.sent), 1)
+        self.assertEqual(sum("新報單" in s for s in notifier.sent), 1)
         await db.close()
 
     async def test_add_signal_op_duplicate_ignored(self):

@@ -1,7 +1,7 @@
-"""信号源基类与消息类型。
+"""信號源基類與消息類型。
 
-架构 A（Telethon userbot，群资格即授权）与架构 B（官方 Bot + getChatMember
-校验 + API 推送）实现同一接口，执行引擎对信号来源零感知。
+架構 A（Telethon userbot，群資格即授權）與架構 B（官方 Bot + getChatMember
+校驗 + API 推送）實現同一接口，執行引擎對信號來源零感知。
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import Awaitable, Callable
 
 @dataclass(slots=True)
 class RawMessage:
-    """一条原始消息（新消息或编辑后的全文）。"""
+    """一條原始消息（新消息或編輯後的全文）。"""
     chat_id: int
     chat_title: str
     sender_id: int | None
@@ -25,7 +25,7 @@ MessageHandler = Callable[[RawMessage], Awaitable[None]]
 
 
 class SignalSource:
-    """所有信号源的基类。start() 后由实现方持续调用 handler。"""
+    """所有信號源的基類。start() 後由實現方持續調用 handler。"""
 
     def __init__(self, handler: MessageHandler) -> None:
         self._handler = handler

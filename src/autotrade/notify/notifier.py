@@ -1,4 +1,4 @@
-"""执行回执通知：下单/改单/平仓/告警回推配置的 TG 会话。"""
+"""執行回執通知：下單/改單/平倉/告警回推設定的 TG 會話。"""
 from __future__ import annotations
 
 import logging
@@ -7,9 +7,9 @@ log = logging.getLogger("autotrade.notify")
 
 
 class Notifier:
-    """dry_run 时仅打日志；正式运行时经 Telethon 发到 config.notify.send_to。
+    """dry_run 時僅打日誌；正式運行時經 Telethon 發到 config.notify.send_to。
 
-    client 参数留到 M2 装配（传入与信号源共用的 TelegramClient）。
+    client 參數留到 M2 裝配（傳入與信號源共用的 TelegramClient）。
     """
 
     def __init__(self, dry_run: bool = True, send_to: str = "", client=None) -> None:

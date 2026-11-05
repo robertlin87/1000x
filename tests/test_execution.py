@@ -1,5 +1,7 @@
-"""M2 执行层单测：风控 validate、PositionTracker、OrderManager、TriggerRouter、Watchdog。"""
+"""M2 執行層單測：風控 validate、PositionTracker、OrderManager、TriggerRouter、Watchdog。"""
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from autotrade.exchange.noop import NoopAdapter
 from autotrade.execution.order_manager import OrderManager
@@ -12,7 +14,7 @@ from autotrade.risk.engine import validate
 
 
 class StubAdapter(NoopAdapter):
-    """可控假适配器：position/positions/open_orders 可注入，记录撤单与下单动作。"""
+    """可控假適配器：position/positions/open_orders 可注入，記錄撤單與下單動作。"""
 
     def __init__(self, position=None, positions=None, open_orders=None, ticker=1.0):
         super().__init__()
@@ -77,11 +79,17 @@ class TestRiskValidate(unittest.TestCase):
         self.assertTrue(d.accepted)
         self.assertEqual(d.qty, 250)
 
+    def test_zero_qty_not_rejected_by_risk(self):
+        # 算出 0 手不再拒單，交給執行層的系統最低手數託底
+        d = validate(make_signal(entry=100.0, sl=50.0), 1000.0, 1.0)
+        self.assertTrue(d.accepted)
+        self.assertEqual(d.qty, 0)
+
     def test_analyst_not_allowed(self):
         d = validate(make_signal(), 1000.0, 1.0,
                      analysts_cfg={"allow_all": False, "list": ["Trader X"]})
         self.assertFalse(d.accepted)
-        self.assertIn("分析师", d.reason)
+        self.assertIn("分析師", d.reason)
 
     def test_reverse_signal(self):
         positions = [{"symbol": "LITUSDT", "side": "short"}]
@@ -98,23 +106,23 @@ class TestRiskValidate(unittest.TestCase):
         d = validate(make_signal(), 1000.0, 1.0, open_positions=positions,
                      risk_cfg={"max_concurrent_positions": 3})
         self.assertFalse(d.accepted)
-        self.assertIn("并发", d.reason)
+        self.assertIn("併發", d.reason)
 
     def test_margin_mismatch(self):
         d = validate(make_signal(margin_pct=50.0), 1000.0, 1.0)
         self.assertFalse(d.accepted)
-        self.assertIn("保证金", d.reason)
+        self.assertIn("保證金", d.reason)
 
     def test_min_notional(self):
         d = validate(make_signal(), 100.0, 1.0, risk_cfg={"min_notional": 200.0})
         self.assertFalse(d.accepted)
-        self.assertIn("名义值", d.reason)
+        self.assertIn("名義值", d.reason)
 
     def test_daily_loss_limit(self):
         d = validate(make_signal(), 1000.0, 1.0, daily_pnl=-60.0,
                      risk_cfg={"daily_loss_pct": 5.0})
         self.assertFalse(d.accepted)
-        self.assertIn("亏损", d.reason)
+        self.assertIn("虧損", d.reason)
 
 
 class TestPositionTracker(unittest.TestCase):
@@ -150,7 +158,7 @@ class TestOrderManager(unittest.IsolatedAsyncioTestCase):
 
 
 class TestApplyModify(unittest.IsolatedAsyncioTestCase):
-    """✏️ 訂單修改：跟随分析师逐项修改，只动变化项（规则 2026-11-04）。"""
+    """✏️ 訂單修改：跟隨分析師逐項修改，只動變化項（規則 2026-11-04）。"""
 
     OLD_TPS = [0.03776, 0.039226, 0.041059, 0.045825]
 
@@ -162,7 +170,7 @@ class TestApplyModify(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_changed_tier_replaced(self):
-        # 只改 TP4：撤旧 0.045825 挂单、按新价 0.0608 重挂，数量不变
+        # 只改 TP4：撤舊 0.045825 掛單、按新價 0.0608 重掛，數量不變
         adapter = self._adapter(open_orders=[
             {"id": "tp4", "type": "limit", "reduce_only": True, "price": 0.045825, "qty": 1.0},
         ], ticker=0.037)
@@ -176,7 +184,7 @@ class TestApplyModify(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(reorders), 1)
         self.assertAlmostEqual(reorders[0]["price"], 0.0608)
         self.assertAlmostEqual(reorders[0]["qty"], 1.0)
-        self.assertEqual(adapter.amended, [])  # SL 未变
+        self.assertEqual(adapter.amended, [])  # SL 未變
 
     async def test_unchanged_tiers_untouched(self):
         adapter = self._adapter(open_orders=[
@@ -190,7 +198,7 @@ class TestApplyModify(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([c for c in adapter.created if c["reduce_only"]], [])
 
     async def test_invalid_new_price_skipped(self):
-        # 新 TP4 低于现价（做多）→ 立即成交风险，跳过重挂并告警
+        # 新 TP4 低於現價（做多）→ 立即成交風險，跳過重掛並告警
         adapter = self._adapter(open_orders=[
             {"id": "tp4", "type": "limit", "reduce_only": True, "price": 0.045825, "qty": 1.0},
         ], ticker=0.05)
@@ -208,7 +216,7 @@ class TestApplyModify(unittest.IsolatedAsyncioTestCase):
 
 
 class TestCloseAllResidual(unittest.IsolatedAsyncioTestCase):
-    """规则 2026-11-04：全平后残留 reduce-only 挂单必须撤。"""
+    """規則 2026-11-04：全平後殘留 reduce-only 掛單必須撤。"""
 
     async def test_no_position_but_residual_orders_cancel(self):
         adapter = StubAdapter(
@@ -217,9 +225,9 @@ class TestCloseAllResidual(unittest.IsolatedAsyncioTestCase):
         )
         om = OrderManager(adapter)
         closed = await om.close_all("LITUSDT")
-        self.assertFalse(closed)  # 无持仓可平
-        self.assertEqual(adapter.cancelled, ["LITUSDT"])  # 但残留挂单被撤
-        self.assertEqual(adapter.created, [])  # 没有市价平仓动作
+        self.assertFalse(closed)  # 無持倉可平
+        self.assertEqual(adapter.cancelled, ["LITUSDT"])  # 但殘留掛單被撤
+        self.assertEqual(adapter.created, [])  # 沒有市價平倉動作
 
     async def test_position_closed_and_cancelled(self):
         adapter = StubAdapter(position={"symbol": "LITUSDT", "side": "long", "qty": 10.0})
@@ -240,7 +248,7 @@ class TestCloseAllResidual(unittest.IsolatedAsyncioTestCase):
 
 
 class TestWatchdog(unittest.IsolatedAsyncioTestCase):
-    """看护轮询（无状态）：无持仓 + reduce-only 残留 → 撤；部分止盈/进场挂单不动。"""
+    """看護輪詢（無狀態）：無持倉 + reduce-only 殘留 → 撤；部分止盈/進場掛單不動。"""
 
     def _setup(self, adapter):
         notifier = RecordingNotifier()
@@ -254,10 +262,10 @@ class TestWatchdog(unittest.IsolatedAsyncioTestCase):
         wd, notifier = self._setup(adapter)
         await wd.tick()
         self.assertEqual(adapter.cancelled, ["LITUSDT"])
-        self.assertTrue(any("残留挂单" in s for s in notifier.sent), notifier.sent)
+        self.assertTrue(any("殘留掛單" in s for s in notifier.sent), notifier.sent)
 
     async def test_position_alive_keeps_orders(self):
-        # 持仓还在（部分止盈状态）：同 symbol 的 reduce-only 挂单不撤
+        # 持倉還在（部分止盈狀態）：同 symbol 的 reduce-only 掛單不撤
         adapter = StubAdapter(
             positions=[{"symbol": "LITUSDT", "side": "long", "qty": 6.0}],
             open_orders=[{"id": "tp3", "symbol": "LITUSDT", "reduce_only": True}],
@@ -267,7 +275,7 @@ class TestWatchdog(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adapter.cancelled, [])
 
     async def test_pending_entry_kept(self):
-        # 无持仓 + 只有非 reduce-only 挂单 = 进场限价单还在等，不撤
+        # 無持倉 + 只有非 reduce-only 掛單 = 進場限價單還在等，不撤
         adapter = StubAdapter(
             positions=[],
             open_orders=[{"id": "entry", "symbol": "LITUSDT", "reduce_only": False}],
@@ -277,7 +285,7 @@ class TestWatchdog(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adapter.cancelled, [])
 
     async def test_other_symbol_residual(self):
-        # A 币有持仓、B 币残留挂单：只撤 B
+        # A 幣有持倉、B 幣殘留掛單：只撤 B
         adapter = StubAdapter(
             positions=[{"symbol": "AUSDT", "side": "long", "qty": 1.0}],
             open_orders=[
@@ -296,8 +304,8 @@ class TestTriggerRouter(unittest.IsolatedAsyncioTestCase):
         adapter = StubAdapter()
         router = TriggerRouter(adapter, OrderManager(adapter), notifier)
         await router.on_signal(make_signal())
-        self.assertTrue(any("已进场" in s for s in notifier.sent), notifier.sent)
-        # 开仓单 + 4 档 TP 单
+        self.assertTrue(any("已進場" in s for s in notifier.sent), notifier.sent)
+        # 開倉單 + 4 檔 TP 單
         self.assertEqual(len(adapter.created), 5)
         self.assertEqual(adapter.created[0]["side"], "buy")
         self.assertEqual(adapter.created[0]["sl_price"], 2.962)
@@ -308,11 +316,11 @@ class TestTriggerRouter(unittest.IsolatedAsyncioTestCase):
         router = TriggerRouter(adapter, OrderManager(adapter), notifier,
                                analysts_cfg={"allow_all": False, "list": ["Other"]})
         await router.on_signal(make_signal())
-        self.assertTrue(any("拒单" in s for s in notifier.sent), notifier.sent)
+        self.assertTrue(any("拒單" in s for s in notifier.sent), notifier.sent)
         self.assertEqual(adapter.created, [])
 
     async def test_reverse_signal_uses_exchange_positions(self):
-        # 交易所已有 LIT 空仓：做多报单应被反向信号风控拒掉（无本地状态）
+        # 交易所已有 LIT 空倉：做多報單應被反向信號風控拒掉（無本地狀態）
         notifier = RecordingNotifier()
         adapter = StubAdapter(positions=[{"symbol": "LITUSDT", "side": "short", "qty": 1.0}])
         router = TriggerRouter(adapter, OrderManager(adapter), notifier)
@@ -321,7 +329,7 @@ class TestTriggerRouter(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(adapter.created, [])
 
     async def test_sl_hit_event_cancels_residual(self):
-        # ❌ 止損 通知 = 全平场景：无持仓但有残留挂单 → 撤单
+        # ❌ 止損 通知 = 全平場景：無持倉但有殘留掛單 → 撤單
         notifier = RecordingNotifier()
         adapter = StubAdapter(
             position=None,
@@ -333,7 +341,7 @@ class TestTriggerRouter(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("全平" in s for s in notifier.sent), notifier.sent)
 
     async def test_order_multiplier_scales_qty(self):
-        # 下单倍数 0.5：R 减半，手数 250 → 125
+        # 下單倍數 0.5：R 減半，手數 250 → 125
         notifier = RecordingNotifier()
         adapter = StubAdapter()
         router = TriggerRouter(adapter, OrderManager(adapter), notifier,
@@ -343,21 +351,27 @@ class TestTriggerRouter(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(entry["qty"], 125.0)
 
     async def test_qty_below_min_uses_min_times_tiers(self):
-        # 手数低于最低手数 → 按最低手数 × TP档数 下单
+        # 交易所真實返回 cost.min=5U → 交易所最低≈1.644，系統最低=1.644×4檔
         class LowEquityStub(StubAdapter):
             async def fetch_equity(self):
-                return 4.0  # 风控手数 = floor(4×2% ÷ 0.08) = 1 < 最低手数
+                return 4.0  # 風控手數 = floor(4×2% ÷ 0.08) = 1 < 系統最低
+
+            async def fetch_market(self, symbol):
+                m = await super().fetch_market(symbol)
+                m["limits"] = {"amount": {"min": None, "max": None},
+                               "cost": {"min": 5.0}}
+                return m
 
         notifier = RecordingNotifier()
         adapter = LowEquityStub()
+        # validate 的名義值下限（預設 5U）會拒掉 equity=4 的小單，這裡單獨放寬
         router = TriggerRouter(adapter, OrderManager(adapter), notifier,
                                risk_cfg={"min_notional": 0.5})
         await router.on_signal(make_signal())
-        # 最低手数按 min_cost=5U 折算 ≈ 1.644，低于它则按 ×TP档数(4) 下单
         self.assertAlmostEqual(adapter.created[0]["qty"], 1.644 * 4, delta=0.01)
 
     async def test_qty_above_max_capped(self):
-        # 手数高于最高手数 → 按最高手数下单
+        # 手數高於最高手數 → 按最高手數下單
         class MaxLimitedStub(StubAdapter):
             async def fetch_market(self, symbol):
                 m = await super().fetch_market(symbol)
@@ -369,6 +383,108 @@ class TestTriggerRouter(unittest.IsolatedAsyncioTestCase):
         router = TriggerRouter(adapter, OrderManager(adapter), notifier)
         await router.on_signal(make_signal())
         self.assertEqual(adapter.created[0]["qty"], 100.0)
+
+
+    async def test_decimal_multiplier_and_qty_rounded_down_to_step(self):
+        # 倍數可填任意小數：250 × 1.3333 = 333.325，交易所步長 0.1 → 向下取整 333.3
+        class Step01Stub(StubAdapter):
+            async def fetch_market(self, symbol):
+                m = await super().fetch_market(symbol)
+                m["precision"]["amount"] = 0.1
+                return m
+
+        notifier = RecordingNotifier()
+        adapter = Step01Stub()
+        router = TriggerRouter(adapter, OrderManager(adapter), notifier,
+                               risk_cfg={"order_multiplier": 1.3333})
+        await router.on_signal(make_signal())
+        self.assertAlmostEqual(adapter.created[0]["qty"], 333.3)
+        for o in adapter.created:
+            self.assertAlmostEqual(o["qty"] / 0.1, round(o["qty"] / 0.1))
+
+    async def test_qty_never_rounds_up(self):
+        # 250 × 1.002 = 250.5，步長 1 → 只能 250，不能四捨五入成 251
+        class Step1Stub(StubAdapter):
+            async def fetch_market(self, symbol):
+                m = await super().fetch_market(symbol)
+                m["precision"]["amount"] = 1.0
+                return m
+
+        notifier = RecordingNotifier()
+        adapter = Step1Stub()
+        router = TriggerRouter(adapter, OrderManager(adapter), notifier,
+                               risk_cfg={"order_multiplier": 1.002})
+        await router.on_signal(make_signal())
+        self.assertEqual(adapter.created[0]["qty"], 250.0)
+
+    async def test_invalid_multiplier_skips_order(self):
+        notifier = RecordingNotifier()
+        adapter = StubAdapter()
+        router = TriggerRouter(adapter, OrderManager(adapter), notifier,
+                               risk_cfg={"order_multiplier": "abc"})
+        await router.on_signal(make_signal())
+        self.assertEqual(adapter.created, [])
+        self.assertTrue(any("設定錯誤" in s for s in notifier.sent), notifier.sent)
+
+
+    def _market_with_min(self, adapter, min_amount=0.001):
+        adapter.fetch_market = AsyncMock(return_value={
+            "symbol": "XUSDT", "contractSize": 1.0,
+            "precision": {"amount": 0.001, "price": 0.0001},
+            "limits": {"amount": {"min": min_amount, "max": None}, "cost": {}},
+            "active": True,
+        })
+
+    async def test_system_min_is_exchange_min_times_tp_tiers(self):
+        # 使用者規則：系統最低手數 = 交易所最低手數 × TP檔數 n，倍數跟檔數走
+        for n, expected in ((2, 0.002), (4, 0.004), (5, 0.005)):
+            with self.subTest(tiers=n):
+                adapter = StubAdapter()
+                self._market_with_min(adapter)
+                router = TriggerRouter(adapter, OrderManager(adapter),
+                                       RecordingNotifier(),
+                                       risk_cfg={"order_multiplier": 1.0})
+                with patch("autotrade.execution.trigger_router.validate") as m:
+                    m.return_value = SimpleNamespace(accepted=True, qty=0.00256,
+                                                     reason="")
+                    await router.on_signal(make_signal(tps=[3.1] * n))
+                self.assertEqual(adapter.created[0]["qty"], expected)
+
+    async def test_case_0_00256_with_four_tiers_orders_0_004(self):
+        # 使用者案例：交易所最低 0.001、算出 0.00256、4 檔 TP → 下 0.004
+        adapter = StubAdapter()
+        self._market_with_min(adapter)
+        router = TriggerRouter(adapter, OrderManager(adapter), RecordingNotifier(),
+                               risk_cfg={"order_multiplier": 1.0})
+        with patch("autotrade.execution.trigger_router.validate") as m:
+            m.return_value = SimpleNamespace(accepted=True, qty=0.00256, reason="")
+            await router.on_signal(make_signal())
+        self.assertEqual(adapter.created[0]["qty"], 0.004)
+        # 4 檔 TP 每檔恰好等於交易所最低手數，都能出場
+        self.assertEqual([o["qty"] for o in adapter.created[1:]],
+                         [0.001, 0.001, 0.001, 0.001])
+
+    async def test_no_fake_min_cost_when_exchange_omits_it(self):
+        # 交易所沒回傳 cost.min/amount.min 時，不再憑空造 5U 下限
+        adapter = StubAdapter()  # limits={}
+        router = TriggerRouter(adapter, OrderManager(adapter), RecordingNotifier(),
+                               risk_cfg={"order_multiplier": 1.0})
+        with patch("autotrade.execution.trigger_router.validate") as m:
+            m.return_value = SimpleNamespace(accepted=True, qty=0.00256, reason="")
+            await router.on_signal(make_signal())
+        self.assertEqual(adapter.created[0]["qty"], 0.002)
+
+    async def test_zero_qty_falls_back_to_system_min(self):
+        # 風控算出 0 手時不拒單，按系統最低手數（0.001 × 4檔 = 0.004）託底
+        adapter = StubAdapter()
+        self._market_with_min(adapter)
+        router = TriggerRouter(adapter, OrderManager(adapter), RecordingNotifier(),
+                               risk_cfg={"order_multiplier": 0.01})
+        sig = make_signal(entry=100.0, sl=50.0)  # 1000×2%/50 = 0.4 → floor 0
+        await router.on_signal(sig)
+        self.assertEqual(adapter.created[0]["qty"], 0.004)
+        self.assertEqual([o["qty"] for o in adapter.created[1:]],
+                         [0.001, 0.001, 0.001, 0.001])
 
 
 if __name__ == "__main__":

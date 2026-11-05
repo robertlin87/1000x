@@ -1,6 +1,6 @@
-"""生成问题报告：python scripts/report.py
+"""生成問題報告：python scripts/report.py
 
-输出 temp 目录下的 txt 文件（聚合去重后的错误摘要 + 最近日志上下文）。
+輸出 temp 目錄下的 txt 檔案（聚合去重後的錯誤摘要 + 最近日誌上下文）。
 """
 from __future__ import annotations
 
@@ -18,8 +18,8 @@ from autotrade.report import write_report_file  # noqa: E402
 def main() -> None:
     paths.ensure_dirs()
     path = write_report_file()
-    print("问题报告已生成：", path)
-    print("把这个文件发给你对接的人即可。")
+    print("問題報告已生成：", path)
+    print("把這個檔案發給你對接的人即可。")
 
 
 if __name__ == "__main__":

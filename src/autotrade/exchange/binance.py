@@ -1,7 +1,7 @@
-"""Binance 适配器：ccxt.binanceusdm（USDT-M 永续）。
+"""Binance 適配器：ccxt.binanceusdm（USDT-M 永續）。
 
-TP/SL 用独立 reduce-only 单（STOP_MARKET / 限价 TP），随单附挂不支持。
-移动止损 = 撤旧 SL 触发单 + 按新价重挂。
+TP/SL 用獨立 reduce-only 單（STOP_MARKET / 限價 TP），隨單附掛不支持。
+移動止損 = 撤舊 SL 觸發單 + 按新價重掛。
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ log = logging.getLogger("autotrade.exchange.binance")
 class BinanceAdapter(ExchangeAdapter):
     def __init__(self, api_key: str, secret: str, proxy: dict | None = None) -> None:
         if not api_key or not secret:
-            raise ValueError("Binance apiKey/secret 未配置")
+            raise ValueError("Binance apiKey/secret 未設定")
         ccxt_cfg: dict = {
             "apiKey": api_key,
             "secret": secret,
@@ -31,11 +31,14 @@ class BinanceAdapter(ExchangeAdapter):
             url = f"{ptype}://{addr}:{port}"
             ccxt_cfg["proxies"] = {"http": url, "https": url}
         self._ex = ccxt.binanceusdm(ccxt_cfg)
+        # 看護對賬需要拉「全部」掛單（不指定 symbol）；binanceusdm 預設會把這個
+        # 限速提醒當作異常拋出，顯式確認後放行。
+        self._ex.options.setdefault("fetchOpenOrders", {})["warnWithoutSymbol"] = False
         self._markets_loaded = False
 
     @property
     def capabilities(self) -> dict:
-        # TP/SL 走独立 reduce-only 单（OrderManager 非 attached 分支）
+        # TP/SL 走獨立 reduce-only 單（OrderManager 非 attached 分支）
         return {"supports_attached_sl": False}
 
     async def _ensure_markets(self) -> None:
@@ -57,7 +60,7 @@ class BinanceAdapter(ExchangeAdapter):
         base, _, settle = symbol.partition("/")
         return f"{base}{settle.split(':')[0]}"
 
-    # ---- 只读 ----
+    # ---- 只讀 ----
 
     async def fetch_equity(self) -> float:
         await self._ensure_markets()
@@ -69,7 +72,7 @@ class BinanceAdapter(ExchangeAdapter):
         await self._ensure_markets()
         s = self.to_ccxt_symbol(symbol)
         if s not in self._ex.markets:
-            raise ValueError(f"Binance 无此交易对（或已下架）：{s}")
+            raise ValueError(f"Binance 無此交易對（或已下架）：{s}")
         m = self._ex.markets[s]
         return {
             "symbol": s,
@@ -93,7 +96,7 @@ class BinanceAdapter(ExchangeAdapter):
     async def set_leverage(self, symbol: str, leverage: int) -> None:
         await self._ensure_markets()
         s = self.to_ccxt_symbol(symbol)
-        # 全仓模式；逐仓需改 marginMode 为 ISOLATED（实测确认默认行为后调整）
+        # 全倉模式；逐倉需改 marginMode 為 ISOLATED（實測確認預設行為後調整）
         await asyncio.to_thread(
             self._ex.set_leverage, leverage, s, {"marginMode": "CROSS"}
         )
@@ -110,13 +113,13 @@ class BinanceAdapter(ExchangeAdapter):
         return str(res.get("id") or res.get("orderId") or "")
 
     async def attach_sl_tp(self, order_id: str, symbol: str, sl, tps) -> None:
-        """挂独立 SL：STOP_MARKET reduce-only（数量=当前持仓）。"""
+        """掛獨立 SL：STOP_MARKET reduce-only（數量=目前持倉）。"""
         if sl is None:
             return
         await self._ensure_markets()
         pos = await self.fetch_position(symbol)
         if not pos or pos.get("qty", 0) <= 0:
-            log.warning("挂 SL 时无持仓：%s", symbol)
+            log.warning("掛 SL 時無持倉：%s", symbol)
             return
         close_side = "sell" if pos["side"] == "long" else "buy"
         await asyncio.to_thread(
@@ -124,10 +127,10 @@ class BinanceAdapter(ExchangeAdapter):
             "market", close_side, pos["qty"], None,
             {"stopPrice": sl, "reduceOnly": True},
         )
-        log.info("已挂独立 SL：%s @%s（qty=%s）", symbol, sl, pos["qty"])
+        log.info("已掛獨立 SL：%s @%s（qty=%s）", symbol, sl, pos["qty"])
 
     async def amend_order(self, order_id: str, symbol: str, **kwargs) -> None:
-        """移动止损 = 撤旧 SL 触发单 + 按新价重挂（Binance 无改 SL 端点）。"""
+        """移動止損 = 撤舊 SL 觸發單 + 按新價重掛（Binance 無改 SL 端點）。"""
         sl_price = kwargs.get("sl_price")
         if sl_price is None:
             raise ValueError("amend_order 需要 sl_price")
@@ -135,9 +138,9 @@ class BinanceAdapter(ExchangeAdapter):
         s = self.to_ccxt_symbol(symbol)
         pos = await self.fetch_position(symbol)
         if not pos or pos.get("qty", 0) <= 0:
-            log.warning("移动止损时无持仓：%s", symbol)
+            log.warning("移動止損時無持倉：%s", symbol)
             return
-        # 撤掉旧的 STOP_MARKET reduce-only 单
+        # 撤掉舊的 STOP_MARKET reduce-only 單
         open_orders = await self.fetch_open_orders(symbol)
         for o in open_orders:
             if o.get("reduce_only") and o.get("type") == "market" and o.get("stop_price"):
@@ -147,7 +150,7 @@ class BinanceAdapter(ExchangeAdapter):
             self._ex.create_order, s, "market", close_side, pos["qty"], None,
             {"stopPrice": sl_price, "reduceOnly": True},
         )
-        log.info("已移动止损：%s SL=%s", symbol, sl_price)
+        log.info("已移動止損：%s SL=%s", symbol, sl_price)
 
     async def cancel_order(self, order_id: str, symbol: str) -> None:
         await self._ensure_markets()

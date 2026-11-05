@@ -1,5 +1,6 @@
-"""多交易所接入单测：schema 完整性、工厂分发、非 attached 进场分支。"""
+"""多交易所接入單測：schema 完整性、工廠分發、非 attached 進場分支。"""
 import unittest
+from unittest.mock import MagicMock
 
 from autotrade.exchange.binance import BinanceAdapter
 from autotrade.exchange.bitget import BitgetAdapter
@@ -46,7 +47,7 @@ class TestFactory(unittest.TestCase):
             BitgetAdapter("k", "s", "")
         with self.assertRaises(ValueError):
             DeepcoinAdapter("k", "s", "")
-        # 不需要 passphrase 的所不报错
+        # 不需要 passphrase 的所不報錯
         GateAdapter("k", "s")
         BinanceAdapter("k", "s")
 
@@ -56,10 +57,10 @@ class TestFactory(unittest.TestCase):
 
 
 class TestNonAttachedEnter(unittest.IsolatedAsyncioTestCase):
-    """非 attached 交易所：进场走独立 SL 挂单分支。"""
+    """非 attached 交易所：進場走獨立 SL 掛單分支。"""
 
     async def test_attach_sl_called_after_entry(self):
-        from tests.test_execution import StubAdapter  # 复用可控假适配器
+        from tests.test_execution import StubAdapter  # 複用可控假適配器
         from autotrade.execution.order_manager import OrderManager
         from autotrade.parser.entry_parser import Signal
 
@@ -84,10 +85,40 @@ class TestNonAttachedEnter(unittest.IsolatedAsyncioTestCase):
                      is_limit=False, leverage=10, sl=2.9, tps=[3.1, 3.2],
                      margin_pct=7.0, risk_pct=2.0, stop_dist_pct=2.0)
         result = await om.enter(sig, 100.0)
-        # 独立 SL 被调用一次；进场单不带 sl_price
+        # 獨立 SL 被調用一次；進場單不帶 sl_price
         self.assertEqual(adapter.attached_sl, [("LITUSDT", 2.9)])
         self.assertIsNone(adapter.created[0]["sl_price"])
         self.assertEqual(len(result["tp_order_ids"]), 2)
+
+
+class TestBybitClock(unittest.IsolatedAsyncioTestCase):
+    """Bybit 10002：本機時鐘比服務器慢 > recvWindow 會被拒單。"""
+
+    async def test_recv_window_widened(self):
+        a = BybitAdapter("k", "s")
+        self.assertGreaterEqual(a._ex.options["recvWindow"], 20000)
+
+    async def test_time_difference_loaded_once_and_applied(self):
+        a = BybitAdapter("k", "s")
+        a._ex.load_markets = MagicMock()
+
+        def _sync():
+            a._ex.options["timeDifference"] = -5195  # 本機慢 5.195 秒
+            return -5195
+
+        a._ex.load_time_difference = MagicMock(side_effect=_sync)
+        await a._ensure_markets()
+        await a._ensure_markets()
+        a._ex.load_time_difference.assert_called_once()
+        # ccxt.bybit.nonce() = milliseconds() - timeDifference，校準後時間戳前移
+        self.assertGreater(a._ex.nonce() - a._ex.milliseconds(), 5000)
+
+    async def test_time_sync_failure_does_not_break_private_calls(self):
+        a = BybitAdapter("k", "s")
+        a._ex.load_markets = MagicMock()
+        a._ex.load_time_difference = MagicMock(side_effect=RuntimeError("offline"))
+        await a._ensure_markets()
+        a._ex.load_markets.assert_called_once()
 
 
 if __name__ == "__main__":

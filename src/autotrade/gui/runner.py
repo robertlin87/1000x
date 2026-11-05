@@ -1,4 +1,4 @@
-"""运行日志窗口：后台启动监听，主线程滚动显示日志。"""
+"""執行日誌視窗：背景啟動監聽，主執行緒滾動顯示日誌。"""
 from __future__ import annotations
 
 import asyncio
@@ -10,10 +10,11 @@ from tkinter import scrolledtext, ttk
 
 from .. import main as autotrade_main
 from .. import paths
+from ..logfile import PrivacyFilter
 
 
 class _TkLogHandler(logging.Handler):
-    """把日志记录送入线程安全队列，由主线程轮询写入 Text。"""
+    """把日誌記錄送入執行緒安全佇列，由主執行緒輪詢寫入 Text。"""
 
     def __init__(self, q: "queue.Queue[str]") -> None:
         super().__init__()
@@ -27,11 +28,11 @@ class _TkLogHandler(logging.Handler):
 
 
 class RunnerWindow:
-    """运行窗口：后台线程跑监听，主线程滚动显示日志。关闭窗口即停止。"""
+    """執行視窗：背景執行緒跑監聽，主執行緒滾動顯示日誌。關閉視窗即停止。"""
 
     def __init__(self) -> None:
         self.root = tk.Tk()
-        self.root.title("加密林教头VIP跟单助手")
+        self.root.title("加密林教頭 VIP跟單助手")
         self.root.geometry("780x540")
         self._log_q: "queue.Queue[str]" = queue.Queue()
         self._build_ui()
@@ -42,9 +43,9 @@ class RunnerWindow:
     def _build_ui(self) -> None:
         bar = ttk.Frame(self.root, padding=8)
         bar.pack(fill="x")
-        ttk.Button(bar, text="重新配置", command=self._reconfigure).pack(side="left")
-        ttk.Button(bar, text="导出问题报告", command=self._export_report).pack(side="left", padx=(8, 0))
-        ttk.Label(bar, text="关闭窗口即停止跟单", foreground="#475569").pack(side="right")
+        ttk.Button(bar, text="重新設定", command=self._reconfigure).pack(side="left")
+        ttk.Button(bar, text="匯出問題報告", command=self._export_report).pack(side="left", padx=(8, 0))
+        ttk.Label(bar, text="關閉視窗即停止跟單", foreground="#475569").pack(side="right")
 
         self.text = scrolledtext.ScrolledText(
             self.root, state="disabled", font=("Consolas", 9), wrap="word"
@@ -54,6 +55,7 @@ class RunnerWindow:
     def _install_logger(self) -> None:
         handler = _TkLogHandler(self._log_q)
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        handler.addFilter(PrivacyFilter())
         logger = logging.getLogger("autotrade")
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
@@ -76,12 +78,12 @@ class RunnerWindow:
             try:
                 asyncio.run(autotrade_main.run())
             except Exception:  # noqa: BLE001
-                logging.getLogger("autotrade").exception("监听异常退出")
+                logging.getLogger("autotrade").exception("監聽異常退出")
 
         threading.Thread(target=_target, daemon=True).start()
 
     def _reconfigure(self) -> None:
-        """删除配置并关闭窗口，用户重新打开应用即进入向导。"""
+        """刪除設定並關閉視窗，使用者重新開啟應用程式即進入精靈。"""
         try:
             paths.config_path().unlink(missing_ok=True)
         except OSError:
@@ -89,7 +91,7 @@ class RunnerWindow:
         self.root.destroy()
 
     def _export_report(self) -> None:
-        """生成问题报告并打开 temp 文件夹，用户把 txt 发给对接人。"""
+        """產生問題報告並開啟 temp 資料夾，使用者把 txt 發給對接人。"""
         import os
 
         from ..report import write_report_file
@@ -100,8 +102,8 @@ class RunnerWindow:
                 path = write_report_file()
                 self.root.after(0, lambda: self._on_report_ready(path))
             except Exception as e:  # noqa: BLE001
-                logging.getLogger("autotrade").exception("生成问题报告失败")
-                self.root.after(0, lambda: show_error(self.root, "失败", f"生成报告失败：{e}"))
+                logging.getLogger("autotrade").exception("產生問題報告失敗")
+                self.root.after(0, lambda: show_error(self.root, "失敗", f"產生報告失敗：{e}"))
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -110,10 +112,10 @@ class RunnerWindow:
 
         from .dialogs import show_info
 
-        show_info(self.root, "问题报告已生成",
-                  f"请把下面这个文件发给你对接的人：\n{path}")
+        show_info(self.root, "問題報告已產生",
+                  f"請把下面這個檔案發給你的對接人：\n{path}")
         try:
-            os.startfile(str(paths.temp_dir()))  # 打开 temp 文件夹方便用户找文件
+            os.startfile(str(paths.temp_dir()))  # 開啟 temp 資料夾方便使用者找檔案
         except OSError:
             pass
 

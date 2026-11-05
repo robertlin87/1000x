@@ -1,14 +1,14 @@
-"""Bitunix 适配器（手写 REST 兜底）：ccxt 4.5.91 不支持 bitunix。
+"""Bitunix 適配器（手寫 REST 兜底）：ccxt 4.5.91 不支持 bitunix。
 
-签名与端点按官方 demo（github.com/BitunixOfficial/open-api）实现：
+簽名與端點按官方 demo（github.com/BitunixOfficial/open-api）實現：
 - Base: https://fapi.bitunix.com
-- 请求头 api-key / timestamp(ms) / nonce / sign
+- 請求頭 api-key / timestamp(ms) / nonce / sign
 - sign = HMAC-SHA256(secret, timestamp + nonce + method + path + body) hex
 - side: 1=buy 2=sell；positionSide: 1=long 2=short；orderType: 1=limit 2=market
-- 带 stopPrice 的市价单 = 条件触发单（SL 用）
+- 帶 stopPrice 的市價單 = 條件觸發單（SL 用）
 
-字段名与返回结构按官方 demo 编写，**需真实小单实测确认**（用户逐家验证时
-如有出入，按实测响应调整 _parse_* 即可，接口骨架不变）。
+欄位名與返回結構按官方 demo 編寫，**需真實小單實測確認**（使用者逐家驗證時
+如有出入，按實測響應調整 _parse_* 即可，接口骨架不變）。
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ BASE_URL = "https://fapi.bitunix.com"
 class BitunixRestAdapter(ExchangeAdapter):
     def __init__(self, api_key: str, secret: str, proxy: dict | None = None) -> None:
         if not api_key or not secret:
-            raise ValueError("Bitunix apiKey/secret 未配置")
+            raise ValueError("Bitunix apiKey/secret 未設定")
         self._api_key = api_key
         self._secret = secret
         resolved = resolve_proxy(proxy, default_type="http")
@@ -45,10 +45,10 @@ class BitunixRestAdapter(ExchangeAdapter):
 
     @property
     def capabilities(self) -> dict:
-        # TP/SL 走独立 reduce-only 触发单（非 attached 分支）
+        # TP/SL 走獨立 reduce-only 觸發單（非 attached 分支）
         return {"supports_attached_sl": False}
 
-    # ---- 底层请求 ----
+    # ---- 底層請求 ----
 
     def _sign(self, method: str, path: str, body: str) -> dict:
         timestamp = str(int(time.time() * 1000))
@@ -66,7 +66,7 @@ class BitunixRestAdapter(ExchangeAdapter):
         }
 
     def _request(self, method: str, path: str, params: dict | None = None) -> dict:
-        """同步 HTTP 请求，返回解析后的 JSON（外层 code=0 为成功）。"""
+        """同步 HTTP 請求，返回解析後的 JSON（外層 code=0 為成功）。"""
         if params is None:
             params = {}
         body = ""
@@ -85,14 +85,14 @@ class BitunixRestAdapter(ExchangeAdapter):
         r.raise_for_status()
         data = r.json()
         if data.get("code") not in (0, "0", None):
-            raise RuntimeError(f"Bitunix API 错误 code={data.get('code')} msg={data.get('msg')}")
+            raise RuntimeError(f"Bitunix API 錯誤 code={data.get('code')} msg={data.get('msg')}")
         return data.get("data") or {}
 
-    # ---- 只读 ----
+    # ---- 只讀 ----
 
     async def fetch_equity(self) -> float:
         data = await asyncio.to_thread(self._request, "GET", "/api/v1/futures/account")
-        # 防御性解析：不同字段名都尝试（实测后收敛到真实字段）
+        # 防禦性解析：不同欄位名都嘗試（實測後收斂到真實欄位）
         for key in ("totalEquity", "equity", "totalWalletBalance", "availableBalance"):
             if isinstance(data, dict) and data.get(key) is not None:
                 return float(data[key])
@@ -112,12 +112,12 @@ class BitunixRestAdapter(ExchangeAdapter):
                 continue
             self._markets[sym] = c
         if s not in self._markets:
-            raise ValueError(f"Bitunix 无此交易对（或已下架）：{s}")
+            raise ValueError(f"Bitunix 無此交易對（或已下架）：{s}")
         return self._markets[s]
 
     @staticmethod
     def to_ccxt_symbol(symbol: str) -> str:
-        """Bitunix 合约 symbol 即 BASEUSDT（如 BTCUSDT），内部格式一致。"""
+        """Bitunix 合約 symbol 即 BASEUSDT（如 BTCUSDT），內部格式一致。"""
         return symbol
 
     @staticmethod
@@ -130,7 +130,7 @@ class BitunixRestAdapter(ExchangeAdapter):
         qty_prec = int(c.get("qtyPrecision") or 0)
         return {
             "symbol": self.to_ccxt_symbol(symbol),
-            "contractSize": float(c.get("faceValue") or 1.0),  # 每张合约的币数
+            "contractSize": float(c.get("faceValue") or 1.0),  # 每張合約的幣數
             "precision": {
                 "amount": 10 ** -qty_prec,
                 "price": 10 ** -price_prec,
@@ -172,16 +172,16 @@ class BitunixRestAdapter(ExchangeAdapter):
         return str(data.get("orderId") or "")
 
     async def attach_sl_tp(self, order_id: str, symbol: str, sl, tps) -> None:
-        """挂独立 SL：市价条件触发单 reduce-only（数量=当前持仓）。"""
+        """掛獨立 SL：市價條件觸發單 reduce-only（數量=目前持倉）。"""
         if sl is None:
             return
         pos = await self.fetch_position(symbol)
         if not pos or pos.get("qty", 0) <= 0:
-            log.warning("挂 SL 时无持仓：%s", symbol)
+            log.warning("掛 SL 時無持倉：%s", symbol)
             return
         params = {
             "symbol": self.to_ccxt_symbol(symbol),
-            "side": 2 if pos["side"] == "long" else 1,  # 平仓方向
+            "side": 2 if pos["side"] == "long" else 1,  # 平倉方向
             "orderType": 2,
             "quantity": pos["qty"],
             "stopPrice": sl,
@@ -190,16 +190,16 @@ class BitunixRestAdapter(ExchangeAdapter):
         await asyncio.to_thread(
             self._request, "POST", "/api/v1/futures/order", params
         )
-        log.info("已挂独立 SL：%s @%s（qty=%s）", symbol, sl, pos["qty"])
+        log.info("已掛獨立 SL：%s @%s（qty=%s）", symbol, sl, pos["qty"])
 
     async def amend_order(self, order_id: str, symbol: str, **kwargs) -> None:
-        """移动止损 = 撤旧 SL 触发单 + 按新价重挂。"""
+        """移動止損 = 撤舊 SL 觸發單 + 按新價重掛。"""
         sl_price = kwargs.get("sl_price")
         if sl_price is None:
             raise ValueError("amend_order 需要 sl_price")
         pos = await self.fetch_position(symbol)
         if not pos or pos.get("qty", 0) <= 0:
-            log.warning("移动止损时无持仓：%s", symbol)
+            log.warning("移動止損時無持倉：%s", symbol)
             return
         for o in await self.fetch_open_orders(symbol):
             if o.get("reduce_only") and o.get("type") == "market" and o.get("stop_price"):
@@ -215,7 +215,7 @@ class BitunixRestAdapter(ExchangeAdapter):
         await asyncio.to_thread(
             self._request, "POST", "/api/v1/futures/order", params
         )
-        log.info("已移动止损：%s SL=%s", symbol, sl_price)
+        log.info("已移動止損：%s SL=%s", symbol, sl_price)
 
     async def cancel_order(self, order_id: str, symbol: str) -> None:
         import urllib.parse

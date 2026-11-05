@@ -1,8 +1,8 @@
-"""交易所配置 schema：向导按此动态渲染字段与注意事项。
+"""交易所設定 schema：嚮導按此動態渲染欄位與注意事項。
 
-字段统一三型：apiKey / secret / passphrase（secret=True 输入框打码）。
-notes 为配置注意事项（权限要求等），面向真实用户实盘。
-无 testnet（产品面向真实用户，试运行用 risk.trial_min_qty 最小手数保护）。
+欄位統一三型：apiKey / secret / passphrase（secret=True 輸入框打碼）。
+notes 為設定注意事項（權限要求等），面向真實使用者實盤。
+無 testnet（產品面向真實使用者，手數正式按風控公式計算，無試運行最小手數模式）。
 """
 
 EXCHANGE_SCHEMAS: dict[str, dict] = {
@@ -13,9 +13,9 @@ EXCHANGE_SCHEMAS: dict[str, dict] = {
             {"key": "secret", "label": "Secret", "secret": True},
         ],
         "notes": [
-            "权限：开启「读写」与「合约交易」，切勿开启「提现」",
-            "充值后需在 Bybit 把资金从「资金账户」划转到「统一交易账户」，否则下单会失败",
-            "建议绑定 IP 白名单（API 管理页面可设置）",
+            "權限：開啟「讀寫」與「合約交易」，切勿開啟「提領」",
+            "儲值後需在 Bybit 把資金從「資金帳戶」劃轉到「統一交易帳戶」，否則下單會失敗",
+            "建議綁定 IP 白名單（限制來源 IP，與可交易品種無關；API 管理頁面可設定）",
         ],
     },
     "binance": {
@@ -25,9 +25,9 @@ EXCHANGE_SCHEMAS: dict[str, dict] = {
             {"key": "secret", "label": "Secret", "secret": True},
         ],
         "notes": [
-            "创建 Key 时开启「启用合约交易」（Enable Futures），切勿开启提现",
-            "强烈建议绑定 IP 白名单（不绑定的 Key 约 90 天自动过期）",
-            "使用 USDT 本位合约（USDⓈ-M）账户，先划转 USDT 到合约账户",
+            "創建 Key 時開啟「啟用合約交易」（Enable Futures），切勿開啟提領",
+            "強烈建議綁定 IP 白名單（限制「可調用 API 的來源 IP」，與可交易品種無關；不綁定則 Key 約 90 天自動過期）",
+            "使用 USDT 本位合約（USDⓈ-M）帳戶，先劃轉 USDT 到合約帳戶",
         ],
     },
     "bitget": {
@@ -38,9 +38,9 @@ EXCHANGE_SCHEMAS: dict[str, dict] = {
             {"key": "passphrase", "label": "Passphrase（必填）", "secret": True},
         ],
         "notes": [
-            "创建 Key 时需要自己设定 Passphrase：忘记无法找回，只能删除重建；建议不要使用特殊字符",
-            "权限：开启「交易」读写（统一账户 UTA 下含「管理」读写=调整杠杆），切勿开启提现",
-            "提现权限仅能通过 IP 白名单开通，请绑定你的 IP",
+            "創建 Key 時需要自己設定 Passphrase：忘記無法找回，只能刪除重建；建議不要使用特殊字符",
+            "權限：開啟「交易」讀寫（統一帳戶 UTA 下含「管理」讀寫=調整槓桿），切勿開啟提領",
+            "提領權限僅能通過 IP 白名單開通，請綁定你的 IP（IP 白名單限制來源 IP，與可交易品種無關）",
         ],
     },
     "gate": {
@@ -50,10 +50,10 @@ EXCHANGE_SCHEMAS: dict[str, dict] = {
             {"key": "secret", "label": "Secret", "secret": True},
         ],
         "notes": [
-            "必须使用 API v4 Key（v2 不支持合约）",
-            "永续合约权限选「读写」，钱包选「只读」，切勿开启提现",
-            "不绑定 IP 白名单的 Key 约 90 天过期，建议绑定",
-            "合约账户需先划入 USDT 并做一笔最小交易激活，否则下单会失败",
+            "必須使用 API v4 Key（v2 不支持合約）",
+            "永續合約權限選「讀寫」，錢包選「只讀」，切勿開啟提領",
+            "不綁定 IP 白名單的 Key 約 90 天過期，建議綁定（限制來源 IP，與可交易品種無關）",
+            "合約帳戶需先劃入 USDT 並做一筆最小交易激活，否則下單會失敗",
         ],
     },
     "deepcoin": {
@@ -64,9 +64,9 @@ EXCHANGE_SCHEMAS: dict[str, dict] = {
             {"key": "passphrase", "label": "Passphrase（必填）", "secret": True},
         ],
         "notes": [
-            "创建 Key 时填写的「密码」就是 Passphrase（可与登录密码不同），请记好",
-            "Key / Secret / Passphrase 三项只显示一次，请立即保存",
-            "授权（Authorization）选择含交易（Trade）的权限，切勿开启提现",
+            "創建 Key 時填寫的「密碼」就是 Passphrase（可與登入密碼不同），請記好",
+            "Key / Secret / Passphrase 三項只顯示一次，請立即儲存",
+            "授權（Authorization）選擇含交易（Trade）的權限，切勿開啟提領",
         ],
     },
     "bitunix": {
@@ -76,9 +76,9 @@ EXCHANGE_SCHEMAS: dict[str, dict] = {
             {"key": "secret", "label": "Secret", "secret": True},
         ],
         "notes": [
-            "账户菜单 → API Management 创建 Key，需完成 2FA 验证",
-            "权限：开启 Read 与 Futures/Trade，切勿开启 Withdraw",
-            "Secret 只显示一次，丢失需撤销重建；建议绑定 IP",
+            "帳戶選單 → API Management 創建 Key，需完成 2FA 驗證",
+            "權限：開啟 Read 與 Futures/Trade，切勿開啟 Withdraw",
+            "Secret 只顯示一次，丟失需撤銷重建；建議綁定 IP 白名單（限制來源 IP，與可交易品種無關）",
         ],
     },
 }

@@ -1,4 +1,4 @@
-"""NoopAdapter：dry-run 假适配器，全链路不碰交易所（PLAN：dry-run 用 NoopAdapter）。"""
+"""NoopAdapter：dry-run 假適配器，全鏈路不碰交易所（PLAN：dry-run 用 NoopAdapter）。"""
 from __future__ import annotations
 
 from .base import ExchangeAdapter, NewOrder
