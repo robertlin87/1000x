@@ -4,8 +4,12 @@
 - 新報單（Signal）→ 查交易所實態 → 風控 validate → OrderManager.enter 建立主觸發掛單
 - 新事件（signal_ops 新行）→ 備份核對/指令（動作前查交易所實態兜底，杜絕雙賣）
 
-架構原則（與使用者確認 2026-11-04）：**交易所為唯一事實源**——風控的持倉列表、
-事件的執行判斷都實時查交易所，不維護本地持倉狀態（重啟零成本）。
+失敗處理（使用者 2026-11-06 確認）：
+- 建倉失敗 → 只回報交易所原因，不重試、不補單
+- 建倉成功但保護單沒掛齊 → 由 OrderManager 當場補掛，這裡彙總提示手動處理
+- 交易員主動動作失敗 → 當場最多重試 5 次、每次隔 2 秒，第 5 次仍失敗提示手動操作
+- 結果通知（❌ 止損 / ✅ 全部止盈）不納入重試，只執行一次
+- 重新開機不補做任何動作
 """
 from __future__ import annotations
 
@@ -14,6 +18,7 @@ import logging
 from ..config import DEFAULT_TP_RATIOS, parse_multiplier, parse_tp_ratios
 from ..risk.engine import validate
 from ..risk.precision import exchange_min_qty, last_positive_tier, round_down_qty
+from .failure import describe_error, report_failure, run_with_retry
 
 log = logging.getLogger("autotrade.execution.trigger_router")
 
@@ -28,11 +33,29 @@ class TriggerRouter:
         self._analysts_cfg = analysts_cfg or {}
 
     async def on_signal(self, signal) -> None:
-        """新報單：查交易所實態 → 風控 → 進場（主觸發通道建立）。"""
+        """新報單：查交易所實態 → 風控 → 進場（主觸發通道建立）。
+
+        整段執行鏈（查餘額、查持倉、風控、開倉）的失敗都回報交易所原因；
+        建倉失敗不重試、不補單，重新開機也不補做。
+        """
+        try:
+            await self._on_signal_impl(signal)
+        except Exception as exc:  # noqa: BLE001 - 交易所錯誤種類繁多，需原樣回報
+            reason = describe_error(exc)
+            report_failure(
+                f"下單失敗：訂單{signal.order_id} {signal.symbol}，原因：{reason}"
+            )
+            await self._notifier.send(
+                f"❌ 下單失敗 訂單{signal.order_id} {signal.symbol}：{reason}"
+            )
+
+    async def _on_signal_impl(self, signal) -> None:
         try:
             market = await self._adapter.fetch_market(signal.symbol)
         except ValueError as e:
-            await self._notifier.send(f"⚠️ 幣種不可交易，跳過：{signal.symbol}（{e}）")
+            reason = describe_error(e)
+            report_failure(f"幣種不可交易，跳過：{signal.symbol}，原因：{reason}")
+            await self._notifier.send(f"⚠️ 幣種不可交易，跳過：{signal.symbol}（{reason}）")
             return
 
         contract_size = market["contractSize"]
@@ -41,9 +64,9 @@ class TriggerRouter:
         decision = validate(signal, equity, contract_size, open_positions,
                             self._risk_cfg, self._analysts_cfg)
         if not decision.accepted:
-            await self._notifier.send(
-                f"❌ 風控拒單 訂單{signal.order_id} {signal.symbol}：{decision.reason}"
-            )
+            detail = f"風控拒單：訂單{signal.order_id} {signal.symbol}，原因：{decision.reason}"
+            report_failure(detail)
+            await self._notifier.send(f"❌ {detail}")
             return
 
         # 下單倍數（使用者設定，預設 1）：報單「控倉維持 x%」的 R 值縮放，
@@ -52,6 +75,7 @@ class TriggerRouter:
         try:
             multiplier = parse_multiplier(self._risk_cfg.get("order_multiplier", 1.0))
         except ValueError as e:
+            report_failure(f"下單倍數設定錯誤，報單未執行：{describe_error(e)}")
             await self._notifier.send(f"❌ 設定錯誤，跳過報單：{e}")
             return
 
@@ -92,6 +116,10 @@ class TriggerRouter:
             qty = round_down_qty(float(max_qty), amount_step)
             log.info("高於最高手數：按最高手數下單 qty=%s", qty)
         if qty <= 0:
+            report_failure(
+                f"訂單{signal.order_id} {signal.symbol} 未執行："
+                f"手數按交易所精度取整後為 0（原始 {raw_qty}），請手動確認"
+            )
             await self._notifier.send(
                 f"⚠️ 手數按交易所精度取整後為 0，跳過：{signal.symbol}（原始 {raw_qty}）"
             )
@@ -99,49 +127,135 @@ class TriggerRouter:
         log.info("下單倍數 x%s：風控手數 %s → 按步長 %s 向下取整後實際手數 %s",
                  multiplier, raw_qty, amount_step, qty)
 
+        # 開倉失敗由外層 on_signal 統一回報；這裡不捕捉、不重試、不補單
         result = await self._om.enter(signal, qty, tp_ratios)
+
         await self._notifier.send(
             f"✅ 已進場 訂單{signal.order_id} {signal.symbol} "
             f"{'做多' if signal.side == 'long' else '做空'} qty={result['qty']} SL={signal.sl}"
         )
+        failures = result.get("protection_failures") or []
+        if failures:
+            detail = "、".join(failures)
+            report_failure(
+                f"訂單{signal.order_id} {signal.symbol} 已進場，但保護單未掛齊："
+                f"{detail}，請手動處理"
+            )
+            await self._notifier.send(
+                f"⚠️ 訂單{signal.order_id} {signal.symbol} 保護單未掛齊："
+                f"{detail}，請手動處理"
+            )
 
     async def on_event(self, order_id: str, symbol: str | None, action_type: str,
                        tp_index: int | None = None, price: float | None = None,
                        mod_fields: dict | None = None, old_signal=None) -> None:
         """備份觸發：事件核對/指令（規則與使用者確認 2026-11-04）。
 
-        - close / all_tp / sl_hit / hedge_exit：全平場景——平剩餘 + 撤該 symbol 掛單
-          （all_tp/sl_hit 時倉位通常已被交易所平掉，close_all 會撤殘留掛單）
+        - close / hedge_exit：全平場景——平剩餘 + 撤該 symbol 掛單，失敗當場重試
+        - sl_hit / all_tp：結果通知，只清一次、不重試
+          （倉位通常已被交易所平掉，close_all 會撤殘留掛單）
         - move_sl / hedge：amend SL 至 price（人為指令，雙通道任一出現即執行）
         - modify：跟隨分析師逐項修改（撤舊 TP 重掛新價、SL 變更 amend）
         - tp_hit：純信息（主觸發掛單已自動止盈，TP1-3 部分平倉不撤單）
         """
         if symbol is None:
-            log.warning("事件缺 symbol，跳過執行：order=%s action=%s", order_id, action_type)
+            report_failure(
+                f"訂單{order_id} {action_type} 未執行：認不出是哪個幣，請手動處理"
+            )
+            await self._notifier.send(
+                f"⚠️ 訂單{order_id} {action_type} 未執行：認不出是哪個幣，請手動處理"
+            )
             return
 
-        if action_type in ("close", "all_tp", "sl_hit", "hedge_exit"):
-            closed = await self._om.close_all(symbol)
+        if action_type in ("sl_hit", "all_tp"):
+            # 結果通知：只做一次清倉/撤單，不重試、不提示手動操作
+            try:
+                closed = await self._om.close_all(symbol)
+            except Exception as exc:  # noqa: BLE001 - 交易所錯誤需原樣回報
+                report_failure(
+                    f"訂單{order_id} {symbol} {action_type} 清理失敗，"
+                    f"原因：{describe_error(exc)}"
+                )
+                return
             await self._notifier.send(
                 f"🟥 全平/撤單 {symbol}（{action_type}）"
                 f"{'已執行' if closed else '無持倉僅記錄'}"
             )
+        elif action_type in ("close", "hedge_exit"):
+            state = {"closed": False}
+
+            async def _close_all():
+                state["closed"] = await self._om.close_all(symbol)
+
+            if not await run_with_retry(
+                _close_all, label=f"訂單{order_id} {symbol} 全平/撤單"
+            ):
+                await self._notifier.send(
+                    f"⚠️ 訂單{order_id} {symbol} 全平/撤單失敗，請手動操作"
+                )
+                return
+            await self._notifier.send(
+                f"🟥 全平/撤單 {symbol}（{action_type}）"
+                f"{'已執行' if state['closed'] else '無持倉僅記錄'}"
+            )
         elif action_type in ("move_sl", "hedge") and price is not None:
-            await self._om.amend_sl(symbol, price)
+            async def _amend_sl():
+                await self._om.amend_sl(symbol, price)
+
+            if not await run_with_retry(
+                _amend_sl, label=f"訂單{order_id} {symbol} 移動止損"
+            ):
+                await self._notifier.send(
+                    f"⚠️ 訂單{order_id} {symbol} 移動止損失敗，請手動操作"
+                )
+                return
             await self._notifier.send(f"🔒 移動止損 {symbol} SL={price}")
         elif action_type == "modify" and mod_fields is not None:
             if old_signal is None:
-                log.warning("訂單修改無歷史報單可對比，跳過執行：%s", order_id)
+                report_failure(
+                    f"訂單{order_id} {symbol} 訂單修改未執行：查無原報單存檔，"
+                    f"無法比對舊價格，請手動處理"
+                )
+                await self._notifier.send(
+                    f"⚠️ 訂單{order_id} {symbol} 訂單修改未執行：查無原報單存檔，請手動處理"
+                )
                 return
-            await self._om.apply_modify(
-                symbol, old_signal.side,
-                mod_fields, list(old_signal.tps), old_signal.sl,
-            )
+
+            state = {"failures": []}
+
+            async def _apply_modify():
+                state["failures"] = await self._om.apply_modify(
+                    symbol, old_signal.side,
+                    mod_fields, list(old_signal.tps), old_signal.sl,
+                )
+
+            if not await run_with_retry(
+                _apply_modify, label=f"訂單{order_id} {symbol} 訂單修改"
+            ):
+                await self._notifier.send(
+                    f"⚠️ 訂單{order_id} {symbol} 訂單修改失敗，請手動操作"
+                )
+                return
+            if state["failures"]:
+                detail = "、".join(state["failures"])
+                report_failure(
+                    f"訂單{order_id} {symbol} 訂單修改部分未辦成：{detail}，請手動處理"
+                )
+                await self._notifier.send(
+                    f"⚠️ 訂單{order_id} {symbol} 訂單修改部分未辦成：{detail}，請手動處理"
+                )
+                return
             await self._notifier.send(
                 f"✏️ 已跟隨修改 {symbol}：{mod_fields.get('tps')} SL={mod_fields.get('sl')}"
             )
         elif action_type == "tp_hit":
-            # 純信息：TP1-3 部分平倉，剩餘檔位掛單保留；編輯通道的補單核對待真實數據細化
+            # 純信息：TP1-3 部分平倉，剩餘檔位掛單保留；不做任何補單核對
             await self._notifier.send(f"🎯 TP{tp_index} 達成 {symbol} @{price}（信息，主觸發已止盈）")
         else:
-            log.info("事件無需動作：order=%s action=%s", order_id, action_type)
+            report_failure(
+                f"訂單{order_id} {symbol} {action_type} 未執行："
+                f"缺少必要資訊（如新價格）或無法識別，請手動處理"
+            )
+            await self._notifier.send(
+                f"⚠️ 訂單{order_id} {symbol} {action_type} 未執行，請手動處理"
+            )

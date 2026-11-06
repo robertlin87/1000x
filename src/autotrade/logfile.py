@@ -2,16 +2,20 @@
 
 temp 每日清理（paths.cleanup_temp_dir）：昨天及更早的日誌在每次啟動時
 被刪除，只保留當天；當天內按 1MB × 3 份輪轉兜底。
+「下單執行失敗」的完整原因另寫一份到 temp/failed_actions.log，
+供事後 debug 查閱。
 """
 from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
 from . import paths
 
 _MARKER = "_autotrade_file_handler_installed"
+FAILED_ACTIONS_FILE = "failed_actions.log"
 
 # 本機網絡連線細節不寫進使用者可見視窗/問題報告：第三方庫（Telethon、
 # ccxt、requests）連線失敗時會把地址和端口原樣打進 WARNING 日誌。
@@ -38,6 +42,19 @@ class PrivacyFilter(logging.Filter):
             record.msg = scrub_network_words(msg)
             record.args = ()
         return True
+
+
+def record_failure(detail: str) -> None:
+    """把執行失敗的完整原因寫到 temp/failed_actions.log，供事後 debug。"""
+    try:
+        d = paths.temp_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        line = " ".join(str(detail).split())
+        stamp = datetime.now().isoformat(timespec="seconds")
+        with (d / FAILED_ACTIONS_FILE).open("a", encoding="utf-8") as f:
+            f.write(f"{stamp} {scrub_network_words(line)}\n")
+    except OSError:
+        logging.getLogger(__name__).debug("無法寫入失敗記錄", exc_info=True)
 
 
 def install_file_logging() -> None:

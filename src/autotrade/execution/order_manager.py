@@ -5,6 +5,7 @@ import logging
 
 from ..exchange.base import ExchangeAdapter, NewOrder
 from ..risk.precision import exchange_min_qty, plan_tp_tiers, round_down_qty, round_price
+from .failure import run_with_retry
 
 log = logging.getLogger("autotrade.execution.order_manager")
 
@@ -14,7 +15,7 @@ class OrderManager:
 
     - 進場：set_leverage → 開倉（隨單附 SL）→ 掛 n 檔 TP reduce-only 限價單
     - 終態：SL/最終 TP 觸發、手工平倉 → 市價全平剩餘 + cancel_all_for_symbol
-    - 改單失敗重試與降級市價平倉：由觸發層（事件備份通道）負責，不在此處
+    - 保護單掛失敗：當場補掛（最多 5 次、間隔 2 秒），不重開倉、不留到開機後
     """
 
     def __init__(self, adapter: ExchangeAdapter) -> None:
@@ -26,6 +27,9 @@ class OrderManager:
 
         tp_ratios：4 個百分比數字（加總 100，可含 0），決定各檔出場手數；
         None = 均分（向後兼容，selfcheck 直調亦安全）。
+
+        開倉本身失敗時例外外溢，由觸發層回報「下單失敗」且不重試；
+        保護單失敗則在這裡當場補掛，並把沒掛齊的檔位放進 protection_failures。
         """
         sym = signal.symbol
         side = "buy" if signal.side == "long" else "sell"
@@ -52,9 +56,17 @@ class OrderManager:
         )
         entry_id = await self._adapter.create_order(entry_order)
         log.info("開倉已提交：%s %s qty=%s id=%s", sym, side, qty, entry_id)
+
+        # 保護單：開倉成功才掛；掛失敗當場補掛（最多 5 次、每次隔 2 秒）
+        protection_failures: list[str] = []
         if not attached:
-            # 獨立 SL（reduce-only 觸發單，數量=目前持倉）
-            await self._adapter.attach_sl_tp(entry_id, sym, signal.sl, None)
+            async def _attach_sl():
+                await self._adapter.attach_sl_tp(entry_id, sym, signal.sl, None)
+
+            if not await run_with_retry(
+                _attach_sl, label=f"訂單{signal.order_id} {sym} 止損掛單"
+            ):
+                protection_failures.append("止損")
 
         # 掛 TP reduce-only 限價單：前 n-1 檔按止盈部位比例 floor，末檔全清剩餘
         # （全平檔位 = 用戶最後一個非 0 檔與報單最後一檔取靠前者）
@@ -63,15 +75,27 @@ class OrderManager:
         if tps:
             exchange_min = exchange_min_qty(market, signal.entry)
             plans = plan_tp_tiers(qty, tps, tp_ratios, amount_step, exchange_min)
-            for price, tq in plans:
+            for index, (price, tq) in enumerate(plans, start=1):
                 tp_order = NewOrder(
                     symbol=sym, side=close_side, order_type="limit", qty=tq,
                     price=round_price(price, price_step), reduce_only=True,
                 )
-                tp_ids.append(await self._adapter.create_order(tp_order))
+
+                async def _place_tp(order=tp_order):
+                    tp_ids.append(await self._adapter.create_order(order))
+
+                if not await run_with_retry(
+                    _place_tp, label=f"訂單{signal.order_id} {sym} TP{index} 掛單"
+                ):
+                    protection_failures.append(f"TP{index}")
             log.info("已掛 %s 檔 TP：%s", len(tp_ids), sym)
 
-        return {"entry_order_id": entry_id, "tp_order_ids": tp_ids, "qty": qty}
+        return {
+            "entry_order_id": entry_id,
+            "tp_order_ids": tp_ids,
+            "qty": qty,
+            "protection_failures": protection_failures,
+        }
 
     async def close_all(self, symbol: str) -> bool:
         """全平剩餘 + 撤該 symbol 殘留掛單（終態清理）。返回是否有持倉被平。
@@ -102,26 +126,31 @@ class OrderManager:
 
     async def amend_sl(self, symbol: str, sl_price: float,
                        amount: float | None = None) -> None:
-        """移動止損（自動移損/套保 → amend SL）。"""
+        """移動止損（自動移損/套保 → amend SL）。
+
+        查無持倉視為「沒辦成」，丟出異常讓上層重試與視窗回報接住，
+        不能靜默當成功。
+        """
         pos = await self._adapter.fetch_position(symbol)
         if not pos:
-            log.warning("移動止損時無持倉：%s", symbol)
-            return
+            raise RuntimeError(f"交易所查無 {symbol} 持倉，無法移動止損")
         amt = amount if amount is not None else pos["qty"]
         await self._adapter.amend_order(order_id="", symbol=symbol,
                                         sl_price=sl_price, amount=amt)
         log.info("已移動止損：%s SL=%s", symbol, sl_price)
 
     async def apply_modify(self, symbol: str, side: str, mod_fields: dict,
-                           old_tps: list[float], old_sl: float | None) -> None:
+                           old_tps: list[float], old_sl: float | None) -> list[str]:
         """✏️ 訂單修改：跟隨分析師逐項修改，只動變化項（規則 2026-11-04）。
 
+        回傳「沒辦成的檔位說明」清單，讓觸發層在視窗回報並提示手動處理。
         - 某檔 TP 價格變了：撤舊檔掛單、按新價重掛（數量 = 原檔數量）
         - SL 變了：amend SL
         - 沒變的檔不動；舊掛單已不在（該檔已成交）→ 跳過並告警，不重掛
         - 有效性守衛：新價必須仍在有效方向（做多高於現價/做空低於現價），
           防止重掛後立即成交、誤平倉位
         """
+        failures: list[str] = []
         new_sl = mod_fields.get("sl")
         if new_sl is not None and old_sl is not None and abs(new_sl - old_sl) > 1e-12:
             await self.amend_sl(symbol, new_sl)
@@ -137,7 +166,7 @@ class OrderManager:
             if old_p is not None and abs(new_p - old_p) < 1e-12:
                 continue  # 未變化檔不動
             if old_p is None:
-                log.warning("新增 TP 檔位無舊值可比，跳過：%s TP%s @%s", symbol, idx, new_p)
+                failures.append(f"TP{idx} 無舊價可比對，未修改")
                 continue
             # 撤舊檔（按價格匹配掛單）
             replaced_qty = None
@@ -147,14 +176,12 @@ class OrderManager:
                     replaced_qty = float(o.get("qty") or 0)
                     break
             if replaced_qty is None:
-                log.warning("舊檔 TP%s 掛單已不在（可能已成交），跳過重掛：%s @%s",
-                            idx, symbol, new_p)
+                failures.append(f"TP{idx} 舊掛單已不在（可能已成交），未重掛")
                 continue
             # 有效性守衛
             valid = (side == "long" and new_p > last) or (side == "short" and new_p < last)
             if not valid:
-                log.warning("新 TP%s 價 %s 已越過現價 %s，跳過重掛：%s",
-                            idx, new_p, last, symbol)
+                failures.append(f"TP{idx} 新價 {new_p} 已越過現價 {last}，未重掛")
                 continue
             close_side = "sell" if side == "long" else "buy"
             tp_order = NewOrder(
@@ -163,3 +190,4 @@ class OrderManager:
             )
             await self._adapter.create_order(tp_order)
             log.info("已重掛 TP%s：%s @%s（qty=%s）", idx, symbol, new_p, replaced_qty)
+        return failures

@@ -15,6 +15,7 @@ from . import paths
 from .config import load_config
 from .exchange.factory import get_adapter
 from .exchange.noop import NoopAdapter
+from .execution.failure import describe_error, report_failure
 from .execution.order_manager import OrderManager
 from .execution.trigger_router import TriggerRouter
 from .execution.watchdog import Watchdog
@@ -49,8 +50,11 @@ class MessagePipeline:
                 await self._handle_edit(raw)
             else:
                 await self._handle_new(raw)
-        except Exception:
-            log.exception("消息處理失敗 (msg_id=%s)：%s", raw.msg_id, raw.text[:80])
+        except Exception as exc:  # noqa: BLE001 - 任何沒辦成的動作都要在視窗說清原因
+            report_failure(
+                f"訊息處理失敗（msg_id={raw.msg_id}）：{describe_error(exc)}；"
+                f"原文：{raw.text[:80]}"
+            )
 
     # ---- 新消息通道：報單 or 緊湊通知 ----
 
@@ -90,7 +94,10 @@ class MessagePipeline:
             else:
                 log.info("重複事件（冪等忽略）：%s", notice.raw_text[:60])
             return
-        log.info("未識別消息 (msg_id=%s)：%s", raw.msg_id, raw.text[:80].replace("\n", " ⏎ "))
+        report_failure(
+            f"訊息未識別、未執行（msg_id={raw.msg_id}）："
+            f"{raw.text[:80].replace(chr(10), ' ⏎ ')}，請手動確認"
+        )
 
     # ---- 編輯通道：報單 upsert + 操作行差量事件 ----
 
@@ -116,7 +123,9 @@ class MessagePipeline:
                     )
                 continue
             if not order_id:
-                log.warning("操作行缺 order_id，跳過：%s", op.line_text.strip()[:80])
+                report_failure(
+                    f"操作行未執行：認不出訂單號，{op.line_text.strip()[:80]}，請手動處理"
+                )
                 continue
             old_signal = None
             if op.action_type == "modify":
@@ -148,19 +157,32 @@ class MessagePipeline:
                 log.info("重複事件（冪等忽略）：%s", op.line_text.strip()[:60])
 
     async def _apply_modify_db(self, chat_id: int, order_id: str, old_signal, mod_fields) -> None:
-        """訂單修改後同步 signals 表的 tps/sl/entry（後續修改以此為舊值）。"""
+        """改單後只同步「訊息裡明確寫出」的價格，沒提到的一律保持原值。
+
+        TP 依檔位對號入座覆蓋，不是整串換掉：只改 TP3/TP4 時，
+        TP1/TP2、SL、進場價動都不動。沒有舊報單可對照時不猜、不補 0。
+        """
         fields = mod_fields or {}
-        new_tp_prices = [p for _, p in sorted(fields.get("tps") or [])]
-        if not new_tp_prices and old_signal is not None:
-            new_tp_prices = list(old_signal.tps)
         new_sl = fields.get("sl")
-        if new_sl is None and old_signal is not None:
-            new_sl = old_signal.sl
         new_entry = fields.get("entry")
-        if new_entry is None and old_signal is not None:
-            new_entry = old_signal.entry
+        changes = sorted(fields.get("tps") or [])
+
+        if changes and old_signal is None:
+            log.warning("訂單%s 查無原報單存檔，未提及的價格不猜、不寫入", order_id)
+            await update_signal_fields(self._db, chat_id, order_id,
+                                       sl=new_sl, entry=new_entry)
+            return
+
+        new_tp_prices = None
+        if changes:
+            new_tp_prices = list(old_signal.tps)
+            for idx, price in changes:
+                if 1 <= idx <= len(new_tp_prices):
+                    new_tp_prices[idx - 1] = price
+                else:
+                    log.warning("訂單%s 改單檔位 TP%s 超出原有檔數，略過", order_id, idx)
         await update_signal_fields(self._db, chat_id, order_id,
-                                   new_tp_prices, new_sl or 0.0, new_entry or 0.0)
+                                   new_tp_prices, new_sl, new_entry)
 
     async def _log_signal(self, raw: RawMessage, signal) -> None:
         warnings = self._entry.validate(signal)

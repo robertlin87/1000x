@@ -18,6 +18,7 @@ import hmac
 import logging
 import random
 import time
+import urllib.parse
 
 import requests
 
@@ -27,6 +28,9 @@ from .base import ExchangeAdapter, NewOrder
 log = logging.getLogger("autotrade.exchange.bitunix")
 
 BASE_URL = "https://fapi.bitunix.com"
+
+# 請求動作 → requests 函式；簽名用的 method 必須與實際發出的動作一致
+_HTTP_VERBS = {"GET": "get", "POST": "post", "DELETE": "delete"}
 
 
 class BitunixRestAdapter(ExchangeAdapter):
@@ -66,21 +70,28 @@ class BitunixRestAdapter(ExchangeAdapter):
         }
 
     def _request(self, method: str, path: str, params: dict | None = None) -> dict:
-        """同步 HTTP 請求，返回解析後的 JSON（外層 code=0 為成功）。"""
+        """同步 HTTP 請求，返回解析後的 JSON（外層 code=0 為成功）。
+
+        GET/DELETE 的參數放在查詢串、請求體為空；POST 的參數放在請求體。
+        簽名所用的 method 與 path/body 必須與實際發出的請求一致，否則交易所拒簽。
+        """
         if params is None:
             params = {}
+        if method not in _HTTP_VERBS:
+            raise ValueError(f"Bitunix 不支援的請求動作：{method}")
         body = ""
         url = BASE_URL + path
-        if method == "GET":
+        if method in ("GET", "DELETE"):
             if params:
-                query = "&".join(f"{k}={v}" for k, v in params.items())
-                path = f"{path}?{query}"
-                url = f"{url}?{query}"
+                query = urllib.parse.urlencode(params)
+                sep = "&" if "?" in path else "?"
+                path = f"{path}{sep}{query}"
+                url = f"{url}{sep}{query}"
         else:
             body = _json_dumps(params)
         headers = self._sign(method, path, body)
         headers["Content-Type"] = "application/json"
-        resp = requests.post if method == "POST" else requests.get
+        resp = getattr(requests, _HTTP_VERBS[method])
         r = resp(url, headers=headers, data=body, timeout=15, proxies=self._proxies)
         r.raise_for_status()
         data = r.json()
@@ -177,8 +188,7 @@ class BitunixRestAdapter(ExchangeAdapter):
             return
         pos = await self.fetch_position(symbol)
         if not pos or pos.get("qty", 0) <= 0:
-            log.warning("掛 SL 時無持倉：%s", symbol)
-            return
+            raise RuntimeError(f"交易所查無 {symbol} 持倉，無法掛止損")
         params = {
             "symbol": self.to_ccxt_symbol(symbol),
             "side": 2 if pos["side"] == "long" else 1,  # 平倉方向
@@ -199,8 +209,7 @@ class BitunixRestAdapter(ExchangeAdapter):
             raise ValueError("amend_order 需要 sl_price")
         pos = await self.fetch_position(symbol)
         if not pos or pos.get("qty", 0) <= 0:
-            log.warning("移動止損時無持倉：%s", symbol)
-            return
+            raise RuntimeError(f"交易所查無 {symbol} 持倉，無法移動止損")
         for o in await self.fetch_open_orders(symbol):
             if o.get("reduce_only") and o.get("type") == "market" and o.get("stop_price"):
                 await self.cancel_order(o["id"], symbol)
@@ -218,16 +227,12 @@ class BitunixRestAdapter(ExchangeAdapter):
         log.info("已移動止損：%s SL=%s", symbol, sl_price)
 
     async def cancel_order(self, order_id: str, symbol: str) -> None:
-        import urllib.parse
-
         await asyncio.to_thread(
             self._request, "DELETE",
             f"/api/v1/futures/order?{urllib.parse.urlencode({'orderId': order_id})}"
         )
 
     async def cancel_all_for_symbol(self, symbol: str) -> None:
-        import urllib.parse
-
         await asyncio.to_thread(
             self._request, "DELETE",
             f"/api/v1/futures/all-order?{urllib.parse.urlencode({'symbol': self.to_ccxt_symbol(symbol)})}"

@@ -158,14 +158,31 @@ async def update_signal_fields(
     db: aiosqlite.Connection,
     chat_id: int,
     order_id: str,
-    tps: list[float],
-    sl: float,
-    entry: float,
+    tps: list[float] | None = None,
+    sl: float | None = None,
+    entry: float | None = None,
 ) -> None:
-    """訂單修改後同步 signals 表的 tps/sl/entry（後續修改以此為舊值）。"""
+    """訂單修改後同步 signals 表：只更新有傳入的欄位。
+
+    None 代表「這次改單沒提到這個價格」→ 保持原值，不拿 0 或空清單覆蓋。
+    """
+    sets: list[str] = []
+    args: list = []
+    if tps is not None:
+        sets.append("tps_json=?")
+        args.append(json.dumps(tps))
+    if sl is not None:
+        sets.append("sl=?")
+        args.append(sl)
+    if entry is not None:
+        sets.append("entry=?")
+        args.append(entry)
+    if not sets:
+        return
+    sets.append("updated_at=datetime('now')")
+    args.extend([chat_id, order_id])
     await db.execute(
-        "UPDATE signals SET tps_json=?, sl=?, entry=?, updated_at=datetime('now') "
-        "WHERE chat_id=? AND order_id=?",
-        (json.dumps(tps), sl, entry, chat_id, order_id),
+        f"UPDATE signals SET {', '.join(sets)} WHERE chat_id=? AND order_id=?",
+        args,
     )
     await db.commit()

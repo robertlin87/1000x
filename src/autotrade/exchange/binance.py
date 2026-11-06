@@ -119,8 +119,7 @@ class BinanceAdapter(ExchangeAdapter):
         await self._ensure_markets()
         pos = await self.fetch_position(symbol)
         if not pos or pos.get("qty", 0) <= 0:
-            log.warning("掛 SL 時無持倉：%s", symbol)
-            return
+            raise RuntimeError(f"交易所查無 {symbol} 持倉，無法掛止損")
         close_side = "sell" if pos["side"] == "long" else "buy"
         await asyncio.to_thread(
             self._ex.create_order, self.to_ccxt_symbol(symbol),
@@ -138,8 +137,7 @@ class BinanceAdapter(ExchangeAdapter):
         s = self.to_ccxt_symbol(symbol)
         pos = await self.fetch_position(symbol)
         if not pos or pos.get("qty", 0) <= 0:
-            log.warning("移動止損時無持倉：%s", symbol)
-            return
+            raise RuntimeError(f"交易所查無 {symbol} 持倉，無法移動止損")
         # 撤掉舊的 STOP_MARKET reduce-only 單
         open_orders = await self.fetch_open_orders(symbol)
         for o in open_orders:
